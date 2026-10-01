@@ -1,0 +1,29 @@
+[project]
+name = "photoquiz"
+version = "0.1.0"
+description = "Phase-1 trip-detection spike for the couples photo quiz"
+authors = [
+    { name = "shaoyinz", email = "143528263+shaoyinz@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "osxphotos>=0.77.2",
+    "pandas>=3.0.6,<4",
+    "pyarrow>=25.0.1",
+    "pygeohash>=3.5.1,<4",
+    "scikit-learn>=1.9.1",
+    "shapely>=2.1.2",
+    "typer>=0.27.2",
+]
+
+[project.scripts]
+photoquiz = "photoquiz.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

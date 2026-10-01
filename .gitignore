@@ -1,0 +1,10 @@
+data/
+.venv/
+__pycache__/
+*.parquet
+*.csv
+.pytest_cache/
+.DS_Store
+# salt and anchors are inside data/, but be explicit — they are the privacy-critical files
+salt.key
+anchors_*.toml
