@@ -7,13 +7,14 @@ thumbnails or file copies at any stage.
 from __future__ import annotations
 
 import csv
+from collections.abc import Iterable
 from dataclasses import dataclass, fields
 from pathlib import Path
 
 import pandas as pd
 
 from photoquiz.models import PhotoMeta
-from photoquiz.schema import CSV_COLUMNS, CSV_DTYPES, SchemaError, check_header, parse_row
+from photoquiz.schema import CSV_COLUMNS, CSV_DTYPES, SchemaError, check_header, format_row, parse_row
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +40,15 @@ def read_csv(path: Path) -> list[PhotoMeta]:
             except (SchemaError, ValueError) as e:
                 raise SchemaError(f"{path}:{line_no}: {e}") from e
     return out
+
+
+def write_csv(ps: Iterable[PhotoMeta], path: Path) -> None:
+    """The exporter's file format: the pinned header, then one `format_row` per photo."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f, lineterminator="\n")
+        w.writerow(CSV_COLUMNS)
+        w.writerows(format_row(p) for p in ps)
 
 
 def summarize(ps: list[PhotoMeta]) -> IngestSummary:

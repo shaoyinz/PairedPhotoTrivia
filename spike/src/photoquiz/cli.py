@@ -19,7 +19,8 @@ import typer
 
 from photoquiz import anchors as anchors_mod
 from photoquiz import buckets, filters, matching, report, synth, trips
-from photoquiz.ingest import read_csv, read_parquet, summarize, write_parquet
+from photoquiz.ingest import read_csv, read_parquet, summarize, write_csv, write_parquet
+from photoquiz.library import read_library
 from photoquiz.models import Anchors, BucketHash, BucketKey, LatLon, TripWindow
 from photoquiz.schema import LABEL_COLUMNS, SchemaError
 
@@ -115,11 +116,19 @@ def ingest(
     out: Annotated[Path | None, typer.Option("--out")] = None,
     data: DataDir = DEFAULT_DATA,
 ) -> None:
-    """Validate a metadata CSV against the schema and store it as parquet."""
-    if library is not None:
-        raise NotImplementedError("§1.2b osxphotos ingest")
+    """Validate a metadata CSV against the schema and store it as parquet.
+
+    With --library, first write the Mac library to data/<person>_photos.csv (osxphotos; needs Full
+    Disk Access), then ingest that file exactly as if the iOS exporter had produced it.
+    """
+    if library is not None and csv_path is not None:
+        typer.echo("ingest: --csv and --library are alternatives; pass one", err=True)
+        raise typer.Exit(2)
     src = csv_path or data / f"{person}_photos.csv"
     dst = out or data / f"{person}_photos.parquet"
+    if library is not None:
+        write_csv(read_library(library), src)
+        typer.echo(f"library {person}: {library} -> {src}")
     try:
         ps = read_csv(src)
     except SchemaError as e:

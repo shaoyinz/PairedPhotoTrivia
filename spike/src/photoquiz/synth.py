@@ -20,10 +20,11 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from photoquiz.ingest import write_csv
 from photoquiz.models import LatLon, PhotoMeta
 from photoquiz.project import KM_PER_DEG_LAT, KM_PER_DEG_LON
 from photoquiz.report import Label
-from photoquiz.schema import CSV_COLUMNS, LABEL_COLUMNS, format_row
+from photoquiz.schema import LABEL_COLUMNS
 
 TZ = -7 * 3600  # PDT, fixed for the whole fixture
 START = dt.date(2026, 4, 6)  # a Monday
@@ -182,11 +183,8 @@ def write(data: SynthData, out_dir: Path) -> dict[str, Path]:
         "b": out_dir / "b_photos.csv",
         "labels": out_dir / "labels.csv",
     }
-    for person, ps in (("a", data.a), ("b", data.b)):
-        with open(paths[person], "w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f, lineterminator="\n")
-            w.writerow(CSV_COLUMNS)
-            w.writerows(format_row(p) for p in ps)
+    write_csv(data.a, paths["a"])
+    write_csv(data.b, paths["b"])
     with open(paths["labels"], "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f, lineterminator="\n")
         w.writerow(LABEL_COLUMNS)
