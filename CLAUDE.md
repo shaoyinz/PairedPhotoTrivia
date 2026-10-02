@@ -26,7 +26,7 @@ and a remote partner may have no Mac. See `docs/IMPLEMENTATION_PLAN.md`.
 
 ## Privacy (hard constraints)
 
-- Only salted bucket hashes and owner-approved quiz photos may leave a device. Never upload original photos, exact coordinates, or raw timestamps.
+- Only salted bucket hashes, owner-approved quiz photos, and memory journal entries the author chooses to share may leave a device. Never upload original photos, exact coordinates, or raw timestamps.
 - The salt lives only on the two paired devices.
 - Spike data stays local: exports go in `data/` (gitignored). Never commit real coordinates, timestamps, or photo exports.
 

@@ -1,6 +1,6 @@
 # Couples Photo Quiz — MVP PRD
 
-Last updated: 2026-09-25
+Last updated: 2026-10-01
 
 ## Overview
 
@@ -58,6 +58,20 @@ Each round is 5 photos from one trip, preferring photos your partner took. Scori
 - **Veto:** The photo's owner previews every photo before it is sent and can skip any of them.
 - **Daily challenge:** Each partner sends one photo a day and answers one; both answering keeps the streak.
 
+## Memory journal
+
+After a quiz photo is revealed, each partner can attach a short note about that moment. Entries stay on the author's phone unless the author shares them, so the journal is a private diary first and a shared scrapbook only by choice. This is P1: it deepens the loop but isn't needed to validate it.
+
+- **When:** The reveal screen offers "Add a memory?" after each guess, and it can be skipped. Entries can also be added or edited later from any quiz photo in the trip view.
+- **Who:** One entry per partner per photo; each partner can edit or delete only their own.
+- **Local by default:** A new entry is saved only on the author's phone. Each entry has a "Share with partner" switch, off by default, and only shared entries sync. Turning the switch off later deletes the shared copy.
+- **Sender's note:** The sender can write theirs while approving the photo. If shared, it stays hidden until the guess is in, since a note could give away the answer.
+- **Blind reveal:** You see your partner's shared entry only after you write your own (shared or not) or skip. Finding out whether you remember the moment the same way is part of the game.
+- **Content:** Plain text, up to 500 characters. Voice notes are P2.
+- **Memory book:** The trip view lists its quiz photos in time order, with your entries and your partner's shared entries beside each one.
+- **Nudge:** When your partner shares an entry, a push invites you to add yours to unlock it. Journaling never affects the streak, so the daily challenge stays quick.
+- **Storage:** Every entry lives in the local store. A shared entry is also written as one CloudKit record in the pair's shared zone, linked to its quiz photo.
+
 ## Scope
 
 P0 is only what the core loop needs; everything else waits until the loop is validated.
@@ -65,17 +79,17 @@ P0 is only what the core loop needs; everything else waits until the loop is val
 | Priority | Features |
 | --- | --- |
 | P0 | Sign in with Apple; invite link/QR pairing; photo library permission, including limited-access handling; local metadata index; tier 1 matching + tier 3 confirmation; trip list; quiz round (where + when); photo veto; daily challenge + streak; push notifications |
-| P1 | Bluetooth tap-to-pair; tier 2 visual similarity; timed mode; shareable trip recap cards; home-screen widget |
-| P2 | Family/group mode (matching subsets of members); "who took it?" and "who's missing?" modes; WeChat login; Android |
+| P1 | Bluetooth tap-to-pair; tier 2 visual similarity; timed mode; shareable trip recap cards; home-screen widget; memory journal (text) |
+| P2 | Family/group mode (matching subsets of members); "who took it?" and "who's missing?" modes; WeChat login; Android; memory journal voice notes |
 
 ## Privacy and data
 
-Only salted bucket hashes and owner-approved quiz photos ever leave the phone.
+Only salted bucket hashes, owner-approved quiz photos, and memory journal entries the author chooses to share ever leave the phone.
 
-- **Stays on device:** Original photos, exact coordinates, raw timestamps, image embeddings (P1: exchanged only for candidate time windows).
-- **Shared with partner:** Salted hashes of time-location buckets; approved quiz photos; scores. All stored in the pair's CloudKit shared zone.
+- **Stays on device:** Original photos, exact coordinates, raw timestamps, image embeddings (P1: exchanged only for candidate time windows), unshared memory journal entries.
+- **Shared with partner:** Salted hashes of time-location buckets; approved quiz photos; memory journal entries the author shares (P1); scores. All stored in the pair's CloudKit shared zone.
 - **Salt:** Generated at pairing and kept on the two devices. Bucket hashes are low-entropy, so anyone holding the salt could brute-force them; never store it server-side.
-- **Unpairing:** Deletes the shared zone and all quiz photos in it.
+- **Unpairing:** Deletes the shared zone, with all quiz photos and shared journal entries in it. Each partner keeps their own entries locally; entries on the other partner's photos keep only their text.
 - **No face recognition:** Avoids biometric-data rules such as Illinois BIPA.
 - **App Store:** Clear photo-library purpose string and an accurate privacy label.
 
@@ -99,6 +113,7 @@ The first gate is trip-detection accuracy on your own two libraries; nothing els
 - Trip detection: at least 90% precision against trips you label by hand (recall target to set after the spike).
 - Activation: share of pairs that finish pairing and play a first round.
 - Retention: day-7 daily-challenge completion; median streak length.
+- Memory journal (P1): share of revealed quiz photos with an entry; share of entries shared with the partner.
 
 **Milestones**
 
@@ -127,3 +142,5 @@ The first gate is trip-detection accuracy on your own two libraries; nothing els
   - Free first.
 - [x] Whose buffer applies?
   - Different homes: outside either partner's buffer counts, so visits count. Shared home: must be outside both.
+- [x] Should memory journal entries sync to the partner?
+  - Local by default. The author can share any entry, and only shared entries sync.
