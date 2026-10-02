@@ -61,6 +61,9 @@ the report.
       already proven against a real library at full size. Full first pass with progress UI,
       then `PHPhotoLibraryChangeObserver`
 - [ ] Carry over whatever the exporter learned about `.limited` authorization
+- [ ] Per-photo time zone for anchors: PhotoKit has no public API for it. The exporter uses a
+      private property that cannot ship; decide between the phone's own time zone and something
+      better, using the exporter's "differs from this phone's" count
 - [ ] Invite link + QR pairing; CloudKit shared zone (CKShare) for hashed buckets and scores
 - [ ] **Salt exchange:** carry the salt in the QR / invite payload so it never reaches
       CloudKit. Verify whether CKRecord `encryptedValues` in a shared zone is genuinely

@@ -1,4 +1,6 @@
 import dataclasses
+import re
+from pathlib import Path
 
 import pytest
 
@@ -13,8 +15,17 @@ PINNED_HEADER = (
 )
 
 
+SWIFT_ROW = Path(__file__).resolve().parents[2] / "ios/MetadataExport/MetadataExport/CSVRow.swift"
+
+
 def test_header_is_pinned():
     assert CSV_HEADER == PINNED_HEADER
+
+
+def test_swift_exporter_header_is_pinned():
+    m = re.search(r'static let header = "([^"]*)"', SWIFT_ROW.read_text())
+    assert m is not None, f"no `static let header` in {SWIFT_ROW}"
+    assert m.group(1) == PINNED_HEADER
 
 
 def test_photo_meta_fields_follow_csv_order():

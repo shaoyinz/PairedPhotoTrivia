@@ -8,3 +8,6 @@ __pycache__/
 # salt and anchors are inside data/, but be explicit — they are the privacy-critical files
 salt.key
 anchors_*.toml
+# Xcode per-user state and build output
+xcuserdata/
+DerivedData/
