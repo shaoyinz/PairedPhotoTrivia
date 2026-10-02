@@ -48,3 +48,4 @@ and a remote partner may have no Mac. See `docs/IMPLEMENTATION_PLAN.md`.
 ## Conventions
 
 - Keep the core matching and clustering logic in plain, pure functions with tests. It will be ported to Swift, so avoid pandas-only tricks inside the algorithm.
+- Git: commit straight to `main`, with no feature branches or PRs, until the app ships as a product. Revisit this before release.
