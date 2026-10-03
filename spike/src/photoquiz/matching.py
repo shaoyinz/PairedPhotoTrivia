@@ -14,4 +14,6 @@ from photoquiz.models import BucketHash
 
 
 def match(expanded_a: frozenset[BucketHash], raw_b: frozenset[BucketHash]) -> frozenset[BucketHash]:
-    raise NotImplementedError("§1.4")
+    """The hashes both sides hold. Each device then maps them back to its own keys and photos
+    (`buckets.matched_keys`, `buckets.matched_photos`); nothing here can."""
+    return expanded_a & raw_b

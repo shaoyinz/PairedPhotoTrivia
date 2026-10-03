@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Derived from `docs/PRD.md`. Last updated: 2026-10-01.
+Derived from `docs/PRD.md`. Last updated: 2026-10-02.
 
 Phase 1 (the Python spike) is specified in detail because it is the current phase and the
 first gate. Phases 2–4 are sequenced and scoped, but deliberately left coarser: the spike's
@@ -64,10 +64,27 @@ the report.
 - [ ] Per-photo time zone for anchors: PhotoKit has no public API for it. The exporter uses a
       private property that cannot ship; decide between the phone's own time zone and something
       better, using the exporter's "differs from this phone's" count
+- [ ] **Partner privacy — decide before building the exchange:** a shared salt hides the hashes
+      from CloudKit, not from the partner. Bucket inputs are guessable, so either partner can
+      turn the other's hashes into an hourly ~1 km history of every geotagged photo, time apart
+      included (measured: one metro area × one year ≈ 45 s of plain Python). Choose between the
+      shared salt (the partner is trusted with that history) and DH-style private set
+      intersection (each phone keeps its own key; nobody can test guesses offline; a tampered
+      client gets only capped, online probes). PSI costs elliptic-curve crypto on both sides and
+      an async request/reply over CloudKit. Matches are identical either way, so [§1.4](plan/1.4-buckets-and-matching.md) is
+      unaffected, but switching after launch means re-pairing everyone. Record the choice in the
+      PRD privacy section, so phase 4's onboarding line and privacy label say what the partner
+      can actually see
 - [ ] Invite link + QR pairing; CloudKit shared zone (CKShare) for hashed buckets and scores
 - [ ] **Salt exchange:** carry the salt in the QR / invite payload so it never reaches
       CloudKit. Verify whether CKRecord `encryptedValues` in a shared zone is genuinely
       server-opaque before considering the simpler route; until verified, the QR payload wins
+- [ ] **Salt at rest:** keep the salt (or the PSI key) in the Keychain as
+      `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, so an encrypted backup can't yield it and
+      it never restores onto another phone (a new phone re-scans the QR). Don't persist the
+      partner's raw hashes: intersect, keep the matches, re-fetch from CloudKit when needed
+- [ ] **Hold back recent buckets:** upload only buckets older than N days (start with 3), so
+      sync never becomes a live location feed for the partner; trips are quizzed after the fact
 - [ ] Upload own expanded+salted buckets, download partner's, intersect locally, cluster,
       show the trip list with a tier-3 "were you two together?" confirm step
 - [ ] Home/work confirm-and-edit screen
@@ -89,8 +106,12 @@ the report.
 
 ## Phase 4 — TestFlight (week 7)
 
-- [ ] Photo-library purpose string and privacy label matching actual behavior
-- [ ] Onboarding that states the privacy model in a sentence
+- [ ] Photo-library purpose string and privacy label matching actual behavior, as fixed by the
+      phase-2 partner-privacy decision and the recent-bucket hold-back
+- [ ] Onboarding that states the privacy model in a sentence, partner included, copied from the
+      PRD privacy section phase 2 updates. Shared salt: the partner can learn when and roughly
+      where you took geotagged photos, not just your trips together. PSI: only the times and
+      places your photos overlap
 - [ ] 5–10 couples; instrument activation (pairing → first round) and day-7 challenge
       completion; count how often a tester's partner is on Android
 

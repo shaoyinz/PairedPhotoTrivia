@@ -21,7 +21,7 @@ from photoquiz import anchors as anchors_mod
 from photoquiz import buckets, filters, matching, report, synth, trips
 from photoquiz.ingest import read_csv, read_parquet, summarize, write_csv, write_parquet
 from photoquiz.library import read_library
-from photoquiz.models import Anchors, BucketHash, BucketKey, LatLon, TripWindow
+from photoquiz.models import Anchors, BucketHash, LatLon, TripWindow
 from photoquiz.schema import LABEL_COLUMNS, SchemaError
 
 # src/photoquiz/cli.py -> repo root; data/ is gitignored there
@@ -41,7 +41,7 @@ def _salt(data: Path) -> bytes:
     path = data / "salt.key"
     if not path.exists():
         data.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(secrets.token_bytes(32))
+        path.write_bytes(secrets.token_bytes(buckets.SALT_BYTES))
         path.chmod(0o600)
         typer.echo(f"generated {path}")
     return path.read_bytes()
@@ -162,9 +162,7 @@ def buckets_cmd(
 ) -> None:
     """Bucket photos to geohash6 x hour and write the salted hashes (the only thing that leaves a device)."""
     ps = read_parquet(data / f"{person}_filtered.parquet")
-    keys = {k for p in ps if (k := buckets.bucket_key(p)) is not None}
-    if expand:
-        keys = {e for k in keys for e in buckets.expand(k)}
+    keys = buckets.own_keys(ps, expanded=expand)
     hs = buckets.salted_set(keys, _salt(data))
     _write_hashes(hs, data / f"{person}_hashes.txt")
     typer.echo(f"buckets {person}: photos={len(ps)} keys={len(keys)} expanded={expand} hashes={len(hs)}")
@@ -172,12 +170,19 @@ def buckets_cmd(
 
 @app.command("match")
 def match_cmd(data: DataDir = DEFAULT_DATA) -> None:
-    """Intersect A's expanded hashes with B's raw hashes."""
+    """Intersect A's expanded hashes with B's raw hashes, then map the survivors back on each side."""
     expanded_a = _read_hashes(data / "a_hashes.txt")
     raw_b = _read_hashes(data / "b_hashes.txt")
     m = matching.match(expanded_a, raw_b)
     _write_hashes(m, data / "matched.txt")
     typer.echo(f"match: expanded_a={len(expanded_a)} raw_b={len(raw_b)} matched={len(m)}")
+    # Device-local from here: each side sees only the survivors plus its own photos.
+    salt = _salt(data)
+    for person, expanded in (("a", True), ("b", False)):
+        ps = read_parquet(data / f"{person}_filtered.parquet")
+        keys = buckets.matched_keys(buckets.own_keys(ps, expanded=expanded), m, salt)
+        photos = buckets.matched_photos(ps, keys, expanded=expanded)
+        typer.echo(f"  {person}: keys={len(keys)} photos={len(photos)}")
 
 
 @app.command("anchors")
@@ -210,9 +215,7 @@ def trips_cmd(
     salt = _salt(data)
     matched = _read_hashes(data / "matched.txt")
     # Device-local step: A knows which of its own expanded keys produced each surviving hash.
-    own = {k for p in ps_a if (k := buckets.bucket_key(p)) is not None}
-    candidates = {e for k in own for e in buckets.expand(k)}
-    matched_keys: list[BucketKey] = sorted(k for k in candidates if buckets.salted(k, salt) in matched)
+    matched_keys = sorted(buckets.matched_keys(buckets.own_keys(ps_a, expanded=True), matched, salt))
     sessions = trips.sessionize(matched_keys, gap_hours=gap_hours)
     ws = trips.assemble(
         sessions,
