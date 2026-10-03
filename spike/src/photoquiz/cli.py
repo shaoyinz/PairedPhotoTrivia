@@ -61,14 +61,15 @@ def _write_anchors(a: Anchors, path: Path) -> None:
 
     path.write_text(
         "# Inferred home/work. Edit by hand: this file stands in for the in-app confirm screen.\n"
+        "# Edit home and work (work = {} means none); the fields below them record what inference saw.\n"
         f'person = "{a.person}"\n'
         f"home = {ll(a.home)}\n"
         f"work = {ll(a.work)}\n"
         f'home_geohash7 = "{a.home_geohash7}"\n'
         f'work_geohash7 = "{a.work_geohash7 or ""}"\n'
         f"window_days = {a.window_days}\n"
-        f"n_night_photos = {a.n_night_photos}\n"
-        f"n_work_photos = {a.n_work_photos}\n"
+        f"home_nights = {a.home_nights}\n"
+        f"work_days = {a.work_days}\n"
     )
 
 
@@ -82,8 +83,8 @@ def _read_anchors(path: Path) -> Anchors:
         home_geohash7=d["home_geohash7"],
         work_geohash7=d.get("work_geohash7") or None,
         window_days=d["window_days"],
-        n_night_photos=d["n_night_photos"],
-        n_work_photos=d["n_work_photos"],
+        home_nights=d["home_nights"],
+        work_days=d["work_days"],
     )
 
 
@@ -189,18 +190,33 @@ def match_cmd(data: DataDir = DEFAULT_DATA) -> None:
 def anchors_cmd(
     person: Person,
     window_days: int = 90,
+    force: Annotated[bool, typer.Option("--force", help="Overwrite an existing (maybe hand-edited) file.")] = False,
     data: DataDir = DEFAULT_DATA,
 ) -> None:
-    """Infer home/work and write anchors_<person>.toml for hand editing."""
+    """Infer home/work over the export's last --window-days and write anchors_<person>.toml for hand editing."""
+    path = data / f"anchors_{person}.toml"
+    if path.exists() and not force:
+        typer.echo(f"anchors {person}: {path} exists and may hold your edits; pass --force to overwrite", err=True)
+        raise typer.Exit(1)
     ps = read_parquet(data / f"{person}_filtered.parquet")
     now_utc = max(p.utc_epoch for p in ps if p.utc_epoch is not None)
-    a = anchors_mod.infer_anchors(ps, now_utc=now_utc, window_days=window_days)
-    path = data / f"anchors_{person}.toml"
+    try:
+        a = anchors_mod.infer_anchors(ps, person=person, now_utc=now_utc, window_days=window_days)
+    except anchors_mod.NoNightPhotosError as e:
+        typer.echo(f"anchors {person}: {e}; rerun with a larger --window-days or write {path} by hand", err=True)
+        raise typer.Exit(1) from e
     _write_anchors(a, path)
     typer.echo(
-        f"anchors {person}: home={a.home_geohash7} (n={a.n_night_photos}) "
-        f"work={a.work_geohash7} (n={a.n_work_photos}) -> {path}"
+        f"anchors {person}: window={window_days}d home={a.home_geohash7} ({a.home_nights} nights) "
+        f"work={a.work_geohash7 or '—'} ({a.work_days} weekdays) -> {path}"
     )
+    for name, days in (("home", a.home_nights), ("work", a.work_days)):
+        if days < anchors_mod.MIN_SUPPORT_DAYS:
+            typer.echo(
+                f"  warning: {name} rests on {days} day(s) (< {anchors_mod.MIN_SUPPORT_DAYS}); check it in "
+                f"{path.name}, or rerun with --force --window-days {window_days * 2}",
+                err=True,
+            )
 
 
 @app.command("trips")

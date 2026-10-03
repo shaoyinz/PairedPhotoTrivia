@@ -58,8 +58,8 @@ class Anchors:
     home_geohash7: str
     work_geohash7: str | None
     window_days: int
-    n_night_photos: int  # support counts, so the report can flag a weak inference
-    n_work_photos: int
+    home_nights: int  # support: distinct local days behind each anchor, so a weak one can be flagged
+    work_days: int
 
 
 @dataclass(frozen=True, slots=True)
