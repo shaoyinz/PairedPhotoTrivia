@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import hashlib
 import json
 import os
 import secrets
+import tempfile
 import tomllib
 from dataclasses import asdict
 from functools import partial
@@ -57,7 +59,47 @@ def _read_hashes(path: Path) -> frozenset[BucketHash]:
     return frozenset(BucketHash(bytes.fromhex(line)) for line in path.read_text().split())
 
 
+OWN = "generated.json"  # file name -> sha256 of the bytes the pipeline last wrote there
+
+
+def _write_own(directory: Path, files: dict[str, bytes], *, force: bool, stage: str) -> None:
+    """Write every file or none, never replacing one that is yours unless force (exit 1 otherwise).
+
+    A file may be replaced when it is missing, already holds exactly these bytes, or is still what
+    the pipeline last wrote there (its hash in generated.json). Anything else is yours: a real
+    export copied in, labels written by hand, edited anchors. So `make skeleton` can rerun over
+    its own synthetic files but stops before touching real ones.
+    """
+    manifest = directory / OWN
+    own: dict[str, str] = json.loads(manifest.read_text()) if manifest.exists() else {}
+
+    def replaceable(name: str, new: bytes) -> bool:
+        path = directory / name
+        if not path.exists():
+            return True
+        old = path.read_bytes()
+        return old == new or own.get(name) == hashlib.sha256(old).hexdigest()
+
+    yours = [name for name, b in files.items() if not replaceable(name, b)]
+    if yours and not force:
+        typer.echo(
+            f"{stage}: refusing to replace {', '.join(yours)} in {directory}: changed since the pipeline wrote it "
+            "(a real export, labels, hand edits?); pass --force to overwrite",
+            err=True,
+        )
+        raise typer.Exit(1)
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, b in files.items():
+        (directory / name).write_bytes(b)
+        own[name] = hashlib.sha256(b).hexdigest()
+    manifest.write_text(json.dumps(own, indent=2, sort_keys=True) + "\n")
+
+
 def _write_anchors(a: Anchors, path: Path) -> None:
+    path.write_text(_anchors_toml(a))
+
+
+def _anchors_toml(a: Anchors) -> str:
     def ll(p: LatLon | None) -> str:
         return "{}" if p is None else f"{{ lat = {p.lat:.6f}, lon = {p.lon:.6f} }}"
 
@@ -65,7 +107,7 @@ def _write_anchors(a: Anchors, path: Path) -> None:
         shared = '# shared_home = true  # true/false in either file overrides "homes < 1 km apart"\n'
     else:
         shared = f"shared_home = {str(a.shared_home).lower()}\n"
-    path.write_text(
+    return (
         "# Inferred home/work. Edit by hand: this file stands in for the in-app confirm screen.\n"
         "# Edit home, work (work = {} means none) and shared_home; the rest records what inference saw.\n"
         f'person = "{a.person}"\n'
@@ -100,24 +142,104 @@ def _read_anchors(path: Path) -> Anchors:
 
 
 def _read_labels(path: Path) -> list[report.Label]:
+    """Hand-written, so cells are stripped and blank lines skipped; a bad row raises SchemaError."""
+    labels = []
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
         if tuple(next(reader, ())) != LABEL_COLUMNS:
             raise SchemaError(f"{path}: header must be {','.join(LABEL_COLUMNS)}")
-        return [report.Label(*row) for row in reader]
+        for line_no, row in enumerate(reader, start=2):
+            if not any(c.strip() for c in row):
+                continue
+            if len(row) != len(LABEL_COLUMNS):
+                raise SchemaError(f"{path}:{line_no}: expected {len(LABEL_COLUMNS)} fields, got {len(row)}")
+            lb = report.Label(*(c.strip() for c in row))
+            try:
+                report.label_span(lb)
+            except ValueError as e:
+                raise SchemaError(f"{path}:{line_no}: {e}") from e
+            labels.append(lb)
+    return labels
+
+
+def _labels_or_exit(data: Path, stage: str) -> list[report.Label]:
+    try:
+        labels = _read_labels(data / "labels.csv")
+    except SchemaError as e:
+        typer.echo(f"{stage}: {e}", err=True)
+        raise typer.Exit(2) from e
+    if not labels:
+        typer.echo(f"{stage}: labels.csv holds no trips; precision and recall mean nothing yet", err=True)
+    return labels
+
+
+SWEEP_INPUTS = (
+    "labels.csv", "anchors_a.toml", "anchors_b.toml", "a_filtered.parquet", "b_filtered.parquet", "salt.key",
+)  # fmt: skip
+
+
+def _sweep_if_fresh(data: Path) -> tuple[list[report.SweepRow], str]:
+    """sweep.json's rows when it is newer than everything it was computed from, so a sweep of
+    other data (the synthetic run, say) never lands in this report. Also says which case held."""
+    path = data / "sweep.json"
+    if not path.exists():
+        return [], "not run"
+    if any((data / n).stat().st_mtime > path.stat().st_mtime for n in SWEEP_INPUTS if (data / n).exists()):
+        return [], "stale, rerun sweep"
+    return _read_sweep(path), "yes"
+
+
+def _write_sweep(rows: list[report.SweepRow], path: Path) -> None:
+    path.write_text(json.dumps([asdict(r) for r in rows], indent=2))
+
+
+def _read_sweep(path: Path) -> list[report.SweepRow]:
+    def row(d: dict) -> report.SweepRow:
+        ev = {**d["ev"], "overlaps": tuple(tuple(o) for o in d["ev"]["overlaps"])}
+        return report.SweepRow(report.Params(**d["params"]), d["trips"], report.Evaluation(**ev))
+
+    return [row(d) for d in json.loads(path.read_text())]
+
+
+def _hand_check(ws: list[TripWindow], labels: list[report.Label], ev: report.Evaluation) -> list[str]:
+    """What to look at by hand: missed, split and merged labels, and windows no label covers.
+    Terminal only; label names and dates never go into the report."""
+    per_label = {j: [i for i, jj in ev.overlaps if jj == j] for j in range(len(labels))}
+    per_trip = {i: [j for ii, j in ev.overlaps if ii == i] for i in range(len(ws))}
+
+    def when(w: TripWindow) -> str:
+        return f"{_fmt_utc(w.start_utc)}..{_fmt_utc(w.end_utc)}"
+
+    return [
+        *(f"missed: {labels[j].label}" for j, ts in per_label.items() if not ts),
+        *(f"split: {labels[j].label} into {len(ts)} trips" for j, ts in per_label.items() if len(ts) > 1),
+        *(
+            f"merged: {when(ws[i])} covers {', '.join(labels[j].label for j in js)}"
+            for i, js in per_trip.items()
+            if len(js) > 1
+        ),
+        *(f"no label: {when(ws[i])} {ws[i].representative_geohash6}" for i, js in per_trip.items() if not js),
+    ]
 
 
 @app.command("synth")
 def synth_cmd(
     out: Annotated[Path, typer.Option("--out")] = DEFAULT_DATA,
     seed: int = 7,
+    force: Annotated[bool, typer.Option("--force", help="Overwrite real exports and labels too.")] = False,
 ) -> None:
-    """Write synthetic a_photos.csv, b_photos.csv and labels.csv with planted trips."""
+    """Write synthetic a_photos.csv, b_photos.csv and labels.csv with planted trips.
+
+    Refuses to replace any of them that the pipeline did not write, such as a real export or
+    hand-written labels, unless --force; then it writes none.
+    """
     data = synth.generate(seed)
-    paths = synth.write(data, out)
+    with tempfile.TemporaryDirectory() as tmp:
+        files = {p.name: p.read_bytes() for p in synth.write(data, Path(tmp)).values()}
+    _write_own(out, files, force=force, stage="synth")
     typer.echo(f"synth: a={len(data.a)} b={len(data.b)} labels={len(data.labels)} -> {out}")
-    for p in paths.values():
-        typer.echo(f"  {p}")
+    for name in files:
+        typer.echo(f"  {out / name}")
 
 
 @app.command()
@@ -201,14 +323,12 @@ def match_cmd(data: DataDir = DEFAULT_DATA) -> None:
 def anchors_cmd(
     person: Person,
     window_days: int = 90,
-    force: Annotated[bool, typer.Option("--force", help="Overwrite an existing (maybe hand-edited) file.")] = False,
+    force: Annotated[bool, typer.Option("--force", help="Overwrite the file even if edited by hand.")] = False,
     data: DataDir = DEFAULT_DATA,
 ) -> None:
-    """Infer home/work over the export's last --window-days and write anchors_<person>.toml for hand editing."""
+    """Infer home/work over the export's last --window-days and write anchors_<person>.toml for hand
+    editing. Refuses to replace a file edited by hand unless --force."""
     path = data / f"anchors_{person}.toml"
-    if path.exists() and not force:
-        typer.echo(f"anchors {person}: {path} exists and may hold your edits; pass --force to overwrite", err=True)
-        raise typer.Exit(1)
     ps = read_parquet(data / f"{person}_filtered.parquet")
     now_utc = max(p.utc_epoch for p in ps if p.utc_epoch is not None)
     try:
@@ -216,7 +336,7 @@ def anchors_cmd(
     except anchors_mod.NoNightPhotosError as e:
         typer.echo(f"anchors {person}: {e}; rerun with a larger --window-days or write {path} by hand", err=True)
         raise typer.Exit(1) from e
-    _write_anchors(a, path)
+    _write_own(data, {path.name: _anchors_toml(a).encode()}, force=force, stage=f"anchors {person}")
     typer.echo(
         f"anchors {person}: window={window_days}d home={a.home_geohash7} ({a.home_nights} nights) "
         f"work={a.work_geohash7 or '—'} ({a.work_days} weekdays) -> {path}"
@@ -225,7 +345,7 @@ def anchors_cmd(
         if days < anchors_mod.MIN_SUPPORT_DAYS:
             typer.echo(
                 f"  warning: {name} rests on {days} day(s) (< {anchors_mod.MIN_SUPPORT_DAYS}); check it in "
-                f"{path.name}, or rerun with --force --window-days {window_days * 2}",
+                f"{path.name}, or rerun with --window-days {window_days * 2}",
                 err=True,
             )
 
@@ -301,20 +421,27 @@ def report_cmd(
     min_recall: Annotated[float, typer.Option(help="Exit 1 below this.")] = 0.0,
     data: DataDir = DEFAULT_DATA,
 ) -> None:
-    """Coverage, filter drops, precision/recall/split/merge -> spike_report.md."""
-    cov = {p: report.coverage(read_parquet(data / f"{p}_photos.parquet")) for p in ("a", "b")}
+    """Gate, precision/recall/split/merge, GPS coverage, filter drops and the sweep (if run) ->
+    spike_report.md. Lists what to hand-check on the terminal only."""
+    labels = _labels_or_exit(data, "report")
+    kept = {p: read_parquet(data / f"{p}_filtered.parquet") for p in ("a", "b")}
+    cov = {p: report.coverage(ps) for p, ps in kept.items()}
+    travel = {p: report.coverage(report.in_labels(ps, labels)) for p, ps in kept.items()}
     fstats = {
         p: [filters.FilterStats(**s) for s in json.loads((data / f"{p}_filter_stats.json").read_text())]
         for p in ("a", "b")
     }
     ws = [TripWindow(**w) for w in json.loads((data / "trips.json").read_text())]
-    ev = report.evaluate(ws, _read_labels(data / "labels.csv"))
-    (data / "spike_report.md").write_text(report.render(cov, fstats, ev))
+    ev = report.evaluate(ws, labels)
+    rows, swept = _sweep_if_fresh(data)
+    (data / "spike_report.md").write_text(report.render(cov, fstats, ev, travel=travel, sweep=rows))
     typer.echo(
         f"report: precision={ev.precision:.2f} recall={ev.recall:.2f} "
         f"tp={ev.true_positives} fp={ev.false_positives} fn={ev.false_negatives} "
-        f"splits={ev.splits} merges={ev.merges} -> {data / 'spike_report.md'}"
+        f"splits={ev.splits} merges={ev.merges} sweep={swept} -> {data / 'spike_report.md'}"
     )
+    for line in _hand_check(ws, labels, ev):
+        typer.echo(f"  {line}")
     if ev.precision < min_precision or ev.recall < min_recall:
         typer.echo("report: below threshold", err=True)
         raise typer.Exit(1)
@@ -322,6 +449,28 @@ def report_cmd(
 
 @app.command("sweep")
 def sweep_cmd(data: DataDir = DEFAULT_DATA) -> None:
-    """Sweep gap hours, geohash precision (5/6/7) and min photos against the labels."""
-    raise NotImplementedError("§1.8")
+    """Rerun buckets -> match -> trips one parameter at a time around the defaults (gap hours,
+    geohash precision, min photos, home-city radius, silence cap), then home-city radius and
+    silence cap together. Score each run against labels.csv -> sweep.json, which `report` renders."""
+    labels = _labels_or_exit(data, "sweep")
+    anchors_a, anchors_b = _read_anchors(data / "anchors_a.toml"), _read_anchors(data / "anchors_b.toml")
+    ps_a = read_parquet(data / "a_filtered.parquet")
+    ps_b = read_parquet(data / "b_filtered.parquet")
+    points = report.grid()
+    rows = []
+    try:
+        for r in report.sweep(points, labels, anchors_a, anchors_b, ps_a=ps_a, ps_b=ps_b, salt=_salt(data)):
+            rows.append(r)
+            typer.echo(
+                f"  {report.varied(r.params, points[0])}: trips={r.trips} precision={r.ev.precision:.2f} "
+                f"recall={r.ev.recall:.2f} fp={r.ev.false_positives} fn={r.ev.false_negatives} "
+                f"splits={r.ev.splits} merges={r.ev.merges}"
+            )
+    except ValueError as e:
+        typer.echo(f"sweep: {e}", err=True)
+        raise typer.Exit(2) from e
+    _write_sweep(rows, data / "sweep.json")
+    typer.echo(
+        f"sweep: {len(rows)} runs, best {report.varied(report.best(rows).params, points[0])} -> {data / 'sweep.json'}"
+    )
 

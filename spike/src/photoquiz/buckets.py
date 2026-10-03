@@ -19,8 +19,11 @@ SALT_BYTES = 32
 HASH_BYTES = 16
 
 
-def bucket_key(p: PhotoMeta) -> BucketKey | None:
+def bucket_key(p: PhotoMeta, precision: int = GEOHASH_PRECISION) -> BucketKey | None:
     """(geohash6, utc_epoch // 3600). None when no GPS — not an error.
+
+    `precision` exists for the §1.8 sweep (5/6/7); the key's `geohash6` field then holds a cell
+    of that length. Everything else uses 6.
 
     Floor division, so a pre-1970 photo lands in the hour that contains it; Swift's `/`
     truncates toward zero, so the port needs floor division too. Also None without a timestamp,
@@ -28,7 +31,7 @@ def bucket_key(p: PhotoMeta) -> BucketKey | None:
     """
     if p.lat is None or p.lon is None or p.utc_epoch is None:
         return None
-    return BucketKey(pgh.encode(p.lat, p.lon, precision=GEOHASH_PRECISION), p.utc_epoch // 3600)
+    return BucketKey(pgh.encode(p.lat, p.lon, precision=precision), p.utc_epoch // 3600)
 
 
 def _cells(gh: str) -> list[str]:
@@ -65,9 +68,11 @@ def salted_set(ks: Iterable[BucketKey], salt: bytes) -> frozenset[BucketHash]:
     return frozenset(salted(k, salt) for k in ks)
 
 
-def own_keys(ps: Iterable[PhotoMeta], *, expanded: bool) -> frozenset[BucketKey]:
+def own_keys(
+    ps: Iterable[PhotoMeta], *, expanded: bool, precision: int = GEOHASH_PRECISION
+) -> frozenset[BucketKey]:
     """This device's bucket keys; with expanded=True (side A only), their neighborhoods too."""
-    ks = {k for p in ps if (k := bucket_key(p)) is not None}
+    ks = {k for p in ps if (k := bucket_key(p, precision)) is not None}
     return frozenset(e for k in ks for e in expand(k)) if expanded else frozenset(ks)
 
 

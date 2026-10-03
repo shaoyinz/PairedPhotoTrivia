@@ -243,6 +243,15 @@ def test_anchors_file_round_trips(tmp_path, work):
     assert _read_anchors(tmp_path / "anchors_a.toml") == a
 
 
+def test_cli_reruns_over_its_own_unedited_file(tmp_path):
+    ps, _ = apply_all(synth.generate().a)
+    write_parquet(ps, tmp_path / "a_filtered.parquet")
+    run = CliRunner().invoke
+    assert run(app, ["anchors", "-p", "a", "--data", str(tmp_path)]).exit_code == 0
+    again = run(app, ["anchors", "-p", "a", "--window-days", "180", "--data", str(tmp_path)])
+    assert again.exit_code == 0 and "window_days = 180" in (tmp_path / "anchors_a.toml").read_text()
+
+
 def test_cli_keeps_hand_edits_unless_forced(tmp_path):
     ps, _ = apply_all(synth.generate().a)
     write_parquet(ps, tmp_path / "a_filtered.parquet")

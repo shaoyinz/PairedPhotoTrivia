@@ -1,8 +1,12 @@
 import csv
+import json
+import re
 
 import pytest
+from typer.testing import CliRunner
 
 from photoquiz import synth
+from photoquiz.cli import app
 from photoquiz.ingest import read_csv, read_parquet, write_parquet
 from photoquiz.schema import CSV_HEADER, LABEL_HEADER, SchemaError
 
@@ -52,3 +56,56 @@ def test_ingest_rejects_shifted_columns(written, tmp_path):
         csv.writer(f).writerows(rows)
     with pytest.raises(SchemaError):
         read_csv(bad)
+
+
+# the CLI never replaces files that are yours
+
+
+def synth_cli(out, *args):
+    return CliRunner().invoke(app, ["synth", "--out", str(out), *args])
+
+
+def test_synth_reruns_over_its_own_files(tmp_path):
+    assert synth_cli(tmp_path).exit_code == 0
+    first = (tmp_path / "a_photos.csv").read_bytes()
+    assert synth_cli(tmp_path).exit_code == 0
+    assert synth_cli(tmp_path, "--seed", "3").exit_code == 0  # different bytes, still its own
+    assert (tmp_path / "a_photos.csv").read_bytes() != first
+
+
+def test_synth_refuses_a_real_export_and_writes_nothing(tmp_path):
+    assert synth_cli(tmp_path).exit_code == 0
+    real = (tmp_path / "a_photos.csv").read_text().replace("A-00000", "REAL-0")
+    (tmp_path / "a_photos.csv").write_text(real)
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+
+    out = synth_cli(tmp_path, "--seed", "3")  # would rewrite b and labels too
+    assert out.exit_code == 1 and "refusing to replace a_photos.csv" in out.output and "--force" in out.output
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+
+    assert synth_cli(tmp_path, "--force").exit_code == 0
+    assert "REAL-0" not in (tmp_path / "a_photos.csv").read_text()
+
+
+def test_synth_refuses_hand_written_labels(tmp_path):
+    assert synth_cli(tmp_path).exit_code == 0
+    (tmp_path / "labels.csv").write_text(LABEL_HEADER + "\nbig-sur,2026-08-01,2026-08-02,Big Sur\n")
+    out = synth_cli(tmp_path)
+    assert out.exit_code == 1 and "labels.csv" in out.output
+    assert "big-sur" in (tmp_path / "labels.csv").read_text()
+
+
+def test_a_file_from_before_the_pipeline_is_yours_unless_identical(tmp_path):
+    synth.write(synth.generate(), tmp_path)  # same bytes, but no generated.json yet
+    assert synth_cli(tmp_path).exit_code == 0
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "b_photos.csv").write_text(CSV_HEADER + "\n")
+    assert synth_cli(other).exit_code == 1
+
+
+def test_generated_json_holds_only_names_and_hashes(tmp_path):
+    assert synth_cli(tmp_path).exit_code == 0
+    own = json.loads((tmp_path / "generated.json").read_text())
+    assert sorted(own) == ["a_photos.csv", "b_photos.csv", "labels.csv"]
+    assert all(re.fullmatch(r"[0-9a-f]{64}", h) for h in own.values())
