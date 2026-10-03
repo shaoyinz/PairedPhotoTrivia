@@ -18,10 +18,11 @@ from typing import Annotated
 import typer
 
 from photoquiz import anchors as anchors_mod
-from photoquiz import buckets, filters, matching, report, synth, trips
+from photoquiz import buckets, commute, filters, matching, report, synth, trips
 from photoquiz.ingest import read_csv, read_parquet, summarize, write_csv, write_parquet
 from photoquiz.library import read_library
 from photoquiz.models import Anchors, BucketHash, LatLon, TripWindow
+from photoquiz.project import distance_km
 from photoquiz.schema import LABEL_COLUMNS, SchemaError
 
 # src/photoquiz/cli.py -> repo root; data/ is gitignored there
@@ -59,12 +60,17 @@ def _write_anchors(a: Anchors, path: Path) -> None:
     def ll(p: LatLon | None) -> str:
         return "{}" if p is None else f"{{ lat = {p.lat:.6f}, lon = {p.lon:.6f} }}"
 
+    if a.shared_home is None:
+        shared = '# shared_home = true  # true/false in either file overrides "homes < 1 km apart"\n'
+    else:
+        shared = f"shared_home = {str(a.shared_home).lower()}\n"
     path.write_text(
         "# Inferred home/work. Edit by hand: this file stands in for the in-app confirm screen.\n"
-        "# Edit home and work (work = {} means none); the fields below them record what inference saw.\n"
+        "# Edit home, work (work = {} means none) and shared_home; the rest records what inference saw.\n"
         f'person = "{a.person}"\n'
         f"home = {ll(a.home)}\n"
         f"work = {ll(a.work)}\n"
+        f"{shared}"
         f'home_geohash7 = "{a.home_geohash7}"\n'
         f'work_geohash7 = "{a.work_geohash7 or ""}"\n'
         f"window_days = {a.window_days}\n"
@@ -76,6 +82,9 @@ def _write_anchors(a: Anchors, path: Path) -> None:
 def _read_anchors(path: Path) -> Anchors:
     d = tomllib.loads(path.read_text())
     work = d.get("work") or None
+    shared_home = d.get("shared_home")
+    if shared_home is not None and not isinstance(shared_home, bool):
+        raise SchemaError(f"{path}: shared_home must be true or false")
     return Anchors(
         person=d["person"],
         home=LatLon(**d["home"]),
@@ -85,6 +94,7 @@ def _read_anchors(path: Path) -> Anchors:
         window_days=d["window_days"],
         home_nights=d["home_nights"],
         work_days=d["work_days"],
+        shared_home=shared_home,
     )
 
 
@@ -226,6 +236,18 @@ def trips_cmd(
     data: DataDir = DEFAULT_DATA,
 ) -> None:
     """Map matched hashes back to A's own buckets, sessionize, apply the away and >= 5 rules."""
+    anchors_a, anchors_b = _read_anchors(data / "anchors_a.toml"), _read_anchors(data / "anchors_b.toml")
+    try:
+        shared = commute.resolve_shared_home(anchors_a, anchors_b)
+    except ValueError as e:
+        typer.echo(f"trips: {e}; fix shared_home in anchors_a.toml / anchors_b.toml", err=True)
+        raise typer.Exit(2) from e
+    by_hand = anchors_a.shared_home is not None or anchors_b.shared_home is not None
+    typer.echo(
+        f"trips: homes {distance_km(anchors_a.home, anchors_b.home):.2f} km apart -> "
+        + ("shared home, away = outside both buffers" if shared else "different homes, away = outside either buffer")
+        + (" (shared_home set by hand)" if by_hand else "")
+    )
     ps_a = read_parquet(data / "a_filtered.parquet")
     ps_b = read_parquet(data / "b_filtered.parquet")
     salt = _salt(data)
@@ -235,8 +257,8 @@ def trips_cmd(
     sessions = trips.sessionize(matched_keys, gap_hours=gap_hours)
     ws = trips.assemble(
         sessions,
-        _read_anchors(data / "anchors_a.toml"),
-        _read_anchors(data / "anchors_b.toml"),
+        anchors_a,
+        anchors_b,
         ps_a=ps_a,
         ps_b=ps_b,
         min_photos=min_photos,

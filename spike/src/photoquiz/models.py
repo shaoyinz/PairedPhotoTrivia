@@ -60,6 +60,7 @@ class Anchors:
     window_days: int
     home_nights: int  # support: distinct local days behind each anchor, so a weak one can be flagged
     work_days: int
+    shared_home: bool | None = None  # hand override of "homes < 1 km apart" (§1.6); None = by distance
 
 
 @dataclass(frozen=True, slots=True)

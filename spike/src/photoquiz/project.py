@@ -20,3 +20,8 @@ def to_km(p: LatLon, origin: LatLon) -> tuple[float, float]:
     x = dlon * KM_PER_DEG_LON * math.cos(math.radians(origin.lat))
     y = (p.lat - origin.lat) * KM_PER_DEG_LAT
     return x, y
+
+
+def distance_km(a: LatLon, b: LatLon) -> float:
+    """Straight-line km on the plane centered at `a`. For "is it near", not long distances."""
+    return math.hypot(*to_km(b, a))
