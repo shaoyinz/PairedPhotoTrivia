@@ -19,6 +19,7 @@ and a remote partner may have no Mac. See `docs/IMPLEMENTATION_PLAN.md`.
   - Different homes: a spot outside either partner's buffer counts (visits count).
   - Shared home: a spot must be outside both buffers.
 - Trip = matched window under the buffer rule with ≥ 5 photos across both devices. No minimum duration.
+- A trip spans nights until either partner is seen back in their home city (25 km around home–work), or 72 h pass without a located photo. Pausing photos alone does not end it.
 - After a trip is confirmed, include both partners' photos in that window, even unmatched ones.
 - Filter out screenshots, images without capture metadata, and burst duplicates.
 - Times in UTC; distances in km.

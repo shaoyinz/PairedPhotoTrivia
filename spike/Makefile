@@ -16,7 +16,7 @@ skeleton:
 	$(PQ) anchors -p a --force --data $(DATA)
 	$(PQ) anchors -p b --force --data $(DATA)
 	$(PQ) trips --data $(DATA)
-	# both planted trips found (recall 1) and the 4-photo near-trip absent (precision 1)
+	# all four planted trips found, Tahoe as one (recall 1), and the 4-photo near-trip absent (precision 1)
 	$(PQ) report --min-precision 1.0 --min-recall 1.0 --data $(DATA)
 
 test:

@@ -7,9 +7,15 @@ B ~43 km from home), weekday commute noise inside both buffers, and
   - tahoe:     3-day trip, both partners shoot (A has a burst; B has a GPS-less run)
   - monterey:  1-day trip, only A really shoots — B has a single GPS photo, which is what
                lets the trip match at all; backfill must still pick up all of A's photos
-  - near-trip: 4 matched photos away from home — must be rejected by the >= 5 rule
+  - near-trip: 4 matched photos away from home but inside the home city (Half Moon Bay) —
+               must be rejected by the >= 5 rule
+  - napa, then santa cruz two days later: two trips, out of town. The only photos between
+               them are A's dinner in Oakland, outside both 5 km buffers but inside the 25 km
+               home city, so it must split them (§1.7). Placed before the daily noise starts,
+               with its own random stream, so it changes nothing else in the fixture
 plus a screenshot, a row with no capture timestamp, and a few imported (camera-less) photos.
-`labels.csv` holds exactly the two planted trips, so the near-trip would be a false positive.
+Every trip day has no photos overnight, so a trip must survive nights with no photos.
+`labels.csv` holds exactly the four planted trips, so the near-trip would be a false positive.
 """
 
 from __future__ import annotations
@@ -37,11 +43,15 @@ WORK_B = LatLon(37.4430, -122.1610)
 TAHOE = LatLon(39.0968, -120.0324)
 MONTEREY = LatLon(36.6002, -121.8947)
 HALF_MOON_BAY = LatLon(37.4636, -122.4286)
+NAPA = LatLon(38.2975, -122.2869)
+OAKLAND = LatLon(37.8044, -122.2712)
+SANTA_CRUZ = LatLon(36.9741, -122.0308)
 
 TAHOE_DAYS = (dt.date(2026, 7, 10), dt.date(2026, 7, 11), dt.date(2026, 7, 12))
 MONTEREY_DAY = dt.date(2026, 6, 13)
 NEAR_TRIP_DAY = dt.date(2026, 5, 23)
-AWAY_DATES = frozenset((*TAHOE_DAYS, MONTEREY_DAY, NEAR_TRIP_DAY))
+NAPA_DAY, DINNER_DAY, SANTA_CRUZ_DAY = dt.date(2026, 3, 28), dt.date(2026, 3, 29), dt.date(2026, 3, 30)  # Sat-Mon
+AWAY_DATES = frozenset((*TAHOE_DAYS, MONTEREY_DAY, NEAR_TRIP_DAY, NAPA_DAY, DINNER_DAY, SANTA_CRUZ_DAY))
 
 
 @dataclass
@@ -158,12 +168,23 @@ def generate(seed: int = 7) -> SynthData:
     a.add(_utc(START + dt.timedelta(days=9), 20.0), None, screenshot=True, camera=False)
     a.add(None, None)  # no capture timestamp
 
+    # back to back, before START: its own random stream, so nothing above moves
+    rng2 = random.Random(f"{seed}-back-to-back")
+    for day, place in ((NAPA_DAY, NAPA), (SANTA_CRUZ_DAY, SANTA_CRUZ)):
+        for hour in (11.0, 14.0):
+            spot = _jitter(rng2, place, 2.0)
+            _shoot(rng2, a, day, hour, spot, 2)
+            _shoot(rng2, b, day, hour, spot, 2)
+    _shoot(rng2, a, DINNER_DAY, 19.5, OAKLAND, 2)  # only A: evidence, not a match
+
     def key(p: PhotoMeta) -> tuple[bool, int]:
         return (p.utc_epoch is None, p.utc_epoch or 0)
 
     labels = [
         _label("tahoe", "Lake Tahoe", a.photos + b.photos, TAHOE_DAYS),
         _label("monterey", "Monterey", a.photos + b.photos, (MONTEREY_DAY,)),
+        _label("napa", "Napa", a.photos + b.photos, (NAPA_DAY,)),
+        _label("santa-cruz", "Santa Cruz", a.photos + b.photos, (SANTA_CRUZ_DAY,)),
     ]
     return SynthData(sorted(a.photos, key=key), sorted(b.photos, key=key), labels)
 

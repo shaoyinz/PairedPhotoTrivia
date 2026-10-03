@@ -36,7 +36,7 @@ off without scrolling past the other eight. This document keeps the framing and 
 | [1.4 Buckets and matching](plan/1.4-buckets-and-matching.md) | geohash6 × hour, salted hashes, one-sided expansion |
 | [1.5 Anchors](plan/1.5-anchors.md) | Home and work inference from local hours |
 | [1.6 Away rule](plan/1.6-away-rule.md) | Commute buffer and what counts as away |
-| [1.7 Trip assembly](plan/1.7-trip-assembly.md) | Sessionization, ≥ 5 photos, backfill |
+| [1.7 Trip assembly](plan/1.7-trip-assembly.md) | Away sessions joined across nights until back in the home city, ≥ 5 photos, backfill |
 | [1.8 Labels and evaluation](plan/1.8-evaluation.md) | Precision, recall, split/merge, GPS coverage, sweep |
 | [1.9 Tests](plan/1.9-tests.md) | Unit tests and the vectors the Swift port reuses |
 
@@ -86,7 +86,10 @@ the report.
 - [ ] **Hold back recent buckets:** upload only buckets older than N days (start with 3), so
       sync never becomes a live location feed for the partner; trips are quizzed after the fact
 - [ ] Upload own expanded+salted buckets, download partner's, intersect locally, cluster,
-      show the trip list with a tier-3 "were you two together?" confirm step
+      show the trip list with a tier-3 "were you two together?" confirm step. Clustering
+      ([§1.7](plan/1.7-trip-assembly.md)) also needs a few bits from each phone: per matched bucket, in my buffer / in my
+      home city; per gap between out-of-town sessions, seen back in my city / kept taking
+      located photos. Exchange those bits, never the anchors
 - [ ] Home/work confirm-and-edit screen
 - [ ] Two-phone check: same trip list on both devices, no coordinates or raw timestamps in the
       CloudKit dashboard (inspect it and confirm)
@@ -122,15 +125,16 @@ the report.
 | Risk | Trigger | Response |
 | --- | --- | --- |
 | Low GPS coverage | Phase 1 coverage report | Pull tier 2 (Vision feature prints) into P0 |
-| Trips merge or split badly | Split/merge counts at the gate | Swap sessionization for DBSCAN on space × time |
+| Trips merge or split badly | Split/merge counts at the gate | Tune the home-city radius and silence cap ([§1.7](plan/1.7-trip-assembly.md)); DBSCAN on space × time only if that fails |
 | CKShare friction or quotas | Phase 2 two-phone test | Minimal backend (e.g. Supabase) holding only hashes |
 | App Review on photo access | Submission | On-device processing, explained in the purpose string |
 | Anchor inference wrong | Phase 1 anchors output | Confirm/edit UI is already P0; keep it prominent |
 
 ## Open items for the plan itself
 
-- [ ] Confirm gap-based sessionization over ST-DBSCAN as the phase-1 default (PRD names
-      ST-DBSCAN; the reasoning is in [1.7](plan/1.7-trip-assembly.md) and the sweep will settle it)
+- [ ] Confirm the [1.7](plan/1.7-trip-assembly.md) assembly over ST-DBSCAN as the phase-1 default (PRD names ST-DBSCAN).
+      Gap sessions alone split every multi-day trip by night on the fixture; joining away
+      sessions until someone is back in the home city fixed it. Real labels and the sweep settle it
 - [ ] How the remote partner gets the exporter: TestFlight, or an Xcode build on their own Mac.
       TestFlight means a paid developer account is needed in phase 1 rather than phase 4
 - [ ] Partner's export should not travel as raw rows: have them run ingest → buckets →

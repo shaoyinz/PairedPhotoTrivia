@@ -12,6 +12,7 @@ import os
 import secrets
 import tomllib
 from dataclasses import asdict
+from functools import partial
 from pathlib import Path
 from typing import Annotated
 
@@ -231,11 +232,17 @@ def anchors_cmd(
 
 @app.command("trips")
 def trips_cmd(
-    gap_hours: int = 6,
-    min_photos: int = 5,
+    gap_hours: Annotated[int, typer.Option(help="Away buckets further apart start a new session.")] = trips.GAP_HOURS,
+    reach_hours: Annotated[int, typer.Option(help="Backfill reach past a trip's ends; <= gap / 2.")] = trips.REACH_HOURS,
+    city_km: Annotated[float, typer.Option(help="Home city: km around home->work.")] = trips.CITY_KM,
+    max_silence_hours: Annotated[
+        int, typer.Option(help="A trip ends once each partner goes this long without a located photo.")
+    ] = trips.MAX_SILENCE_HOURS,
+    min_photos: int = trips.MIN_PHOTOS,
     data: DataDir = DEFAULT_DATA,
 ) -> None:
-    """Map matched hashes back to A's own buckets, sessionize, apply the away and >= 5 rules."""
+    """Map matched hashes back to A's own buckets, keep the away ones, join nights until someone is
+    back in their home city, apply the >= 5 rule -> trips.json."""
     anchors_a, anchors_b = _read_anchors(data / "anchors_a.toml"), _read_anchors(data / "anchors_b.toml")
     try:
         shared = commute.resolve_shared_home(anchors_a, anchors_b)
@@ -243,9 +250,12 @@ def trips_cmd(
         typer.echo(f"trips: {e}; fix shared_home in anchors_a.toml / anchors_b.toml", err=True)
         raise typer.Exit(2) from e
     by_hand = anchors_a.shared_home is not None or anchors_b.shared_home is not None
+    if shared:
+        rule = f"shared home, away = outside both buffers, out of town = outside both {city_km:g} km home cities"
+    else:
+        rule = f"different homes, away = outside either buffer, out of town = outside either {city_km:g} km home city"
     typer.echo(
-        f"trips: homes {distance_km(anchors_a.home, anchors_b.home):.2f} km apart -> "
-        + ("shared home, away = outside both buffers" if shared else "different homes, away = outside either buffer")
+        f"trips: homes {distance_km(anchors_a.home, anchors_b.home):.2f} km apart -> {rule}"
         + (" (shared_home set by hand)" if by_hand else "")
     )
     ps_a = read_parquet(data / "a_filtered.parquet")
@@ -254,20 +264,33 @@ def trips_cmd(
     matched = _read_hashes(data / "matched.txt")
     # Device-local step: A knows which of its own expanded keys produced each surviving hash.
     matched_keys = sorted(buckets.matched_keys(buckets.own_keys(ps_a, expanded=True), matched, salt))
-    sessions = trips.sessionize(matched_keys, gap_hours=gap_hours)
-    ws = trips.assemble(
-        sessions,
+
+    assemble = partial(
+        trips.assemble,
+        matched_keys,
         anchors_a,
         anchors_b,
         ps_a=ps_a,
         ps_b=ps_b,
-        min_photos=min_photos,
+        gap_hours=gap_hours,
+        reach_hours=reach_hours,
+        city_km=city_km,
+        max_silence_hours=max_silence_hours,
     )
+    try:
+        away, ws = assemble(min_photos=0), assemble(min_photos=min_photos)  # away: before the >= min_photos rule
+    except ValueError as e:
+        typer.echo(f"trips: {e}", err=True)
+        raise typer.Exit(2) from e
     (data / "trips.json").write_text(json.dumps([asdict(w) for w in ws], indent=2))
-    typer.echo(f"trips: matched_keys={len(matched_keys)} sessions={len(sessions)} trips={len(ws)}")
-    for w in ws:
+    typer.echo(
+        f"trips: matched_keys={len(matched_keys)} away={len(away)} trips={len(ws)} "
+        f"(gap > {gap_hours} h, reach {reach_hours} h, silence <= {max_silence_hours} h, >= {min_photos} photos)"
+    )
+    for w in away:
         typer.echo(
-            f"  {_fmt_utc(w.start_utc)}..{_fmt_utc(w.end_utc)} {w.representative_geohash6} "
+            f"  {'' if w in ws else f'under {min_photos} photos: '}"
+            f"{_fmt_utc(w.start_utc)}..{_fmt_utc(w.end_utc)} {w.representative_geohash6} "
             f"a={w.photo_count_a} b={w.photo_count_b} ({w.away_reason})"
         )
 
