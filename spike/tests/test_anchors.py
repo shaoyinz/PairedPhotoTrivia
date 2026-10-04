@@ -1,4 +1,4 @@
-"""§1.5: local hours, the window, and the home/work vote by distinct days."""
+"""§1.5: local hours, the window, the home/work vote by distinct days, and the home history."""
 
 import datetime as dt
 import math
@@ -12,6 +12,7 @@ from photoquiz import synth
 from photoquiz.anchors import (
     MIN_SUPPORT_DAYS,
     NoNightPhotosError,
+    home_eras,
     infer_anchors,
     local_day,
     local_hour,
@@ -20,10 +21,10 @@ from photoquiz.anchors import (
 from photoquiz.cli import _read_anchors, _write_anchors, app
 from photoquiz.filters import apply_all
 from photoquiz.ingest import write_parquet
-from photoquiz.models import Anchors, LatLon, PhotoMeta
+from photoquiz.models import Anchors, Era, LatLon, PhotoMeta
 from photoquiz.project import to_km
 
-PDT, PST, JST, HST = -7 * 3600, -8 * 3600, 9 * 3600, -10 * 3600
+PDT, PST, JST, HST, EDT = -7 * 3600, -8 * 3600, 9 * 3600, -10 * 3600, -4 * 3600
 HOME = LatLon(37.7605, -122.4405)
 WORK = LatLon(37.7900, -122.4000)
 BAR = LatLon(37.7700, -122.4200)
@@ -222,7 +223,94 @@ def test_position_is_the_mean_of_the_winning_cell():
     assert cell(a.home) == a.home_geohash7
 
 
+# home history
+
+OLD = LatLon(40.7300, -73.9950)  # a home on the other coast
+OLD_WORK = LatLon(40.7550, -73.9850)
+FAR = LatLon(21.3000, -157.8500)  # a long stay away
+MOVED = dt.date(2026, 8, 1)
+
+
+def nights(spot: LatLon, first: dt.date, last: dt.date, every: int = 2, tz: int = PDT) -> list[PhotoMeta]:
+    """A photo at 02:00 local every `every` days from first to last, inclusive."""
+    return [at(first + dt.timedelta(days=d), 2.0, spot, tz) for d in range(0, (last - first).days + 1, every)]
+
+
+def current(home: LatLon = HOME, work: LatLon | None = WORK) -> Anchors:
+    return Anchors("a", home, work, cell(home), work and cell(work), 90, 10, 10)
+
+
+def eras(ps, anchors=None, **kw):
+    return home_eras(ps, anchors or current(), now_utc=max(p.utc_epoch for p in ps), **kw)
+
+
+def moved_at(old: list[PhotoMeta], new: list[PhotoMeta]) -> int:
+    """Halfway between just after the last night at the old home and the first at the new one."""
+    return (old[-1].utc_epoch + 1 + new[0].utc_epoch) // 2
+
+
+def test_one_home_throughout_is_one_era():
+    ps = nights(HOME, MOVED - dt.timedelta(days=400), MOVED)
+    assert eras(ps) == [Era(None, HOME, WORK, False, 201)]
+
+
+def test_no_night_photo_is_one_era():
+    assert eras([at(FRI, 12.0, OLD)]) == [Era(None, HOME, WORK, False, 0)]
+
+
+def test_a_move_starts_the_current_era_between_the_two_homes():
+    old = nights(OLD, MOVED - dt.timedelta(days=400), MOVED - dt.timedelta(days=4), tz=EDT)
+    new = nights(HOME, MOVED + dt.timedelta(days=3), MOVED + dt.timedelta(days=150))
+    past, now = eras(old + new)
+    assert past.since_utc is None and past.inferred and km(past.home, OLD) < 0.2 and past.nights == len(old)
+    assert now == Era(moved_at(old, new), HOME, WORK, False, len(new))
+
+
+def test_a_move_too_recent_to_win_a_vote_still_ends_the_old_era():
+    """The anchors file says home is the new place, but 90 days hold more nights at the old one."""
+    old = nights(OLD, MOVED - dt.timedelta(days=400), MOVED, tz=EDT)
+    new = nights(HOME, MOVED + dt.timedelta(days=2), MOVED + dt.timedelta(days=20))
+    assert infer(old + new).home_geohash7 == cell(OLD)  # left alone, inference would keep the old home
+    past, now = eras(old + new)
+    assert past.inferred and km(past.home, OLD) < 0.2
+    assert (now.since_utc, now.home, now.inferred) == (moved_at(old, new), HOME, False)
+
+
+def test_a_past_home_has_its_own_work():
+    first = MOVED - dt.timedelta(days=400)
+    old = nights(OLD, first, MOVED - dt.timedelta(days=2), tz=EDT)
+    office = [at(d, 12.0, OLD_WORK, EDT) for d in weekdays_before(MOVED - dt.timedelta(days=2), 100)]
+    past, now = eras(old + office + nights(HOME, MOVED, MOVED + dt.timedelta(days=150)))
+    assert km(past.work, OLD_WORK) < 0.2 and now.work == WORK
+
+
+def test_a_home_typed_in_by_hand_need_not_be_exact():
+    """A zip code's center a couple of km off is still the current home, not a move."""
+    typed = LatLon(HOME.lat + 0.018, HOME.lon)  # 2 km north
+    assert len(eras(nights(HOME, MOVED - dt.timedelta(days=400), MOVED), current(typed))) == 1
+
+
+def test_a_stay_away_must_win_min_votes_in_a_row():
+    """Two months away with sparse nights at home wins several votes: a past home at 3, not at 10.
+    Either way, before and after it is the current home."""
+    start, away, back = MOVED - dt.timedelta(days=500), MOVED - dt.timedelta(days=250), MOVED - dt.timedelta(days=190)
+    ps = nights(HOME, start, away, every=7) + nights(FAR, away + dt.timedelta(days=1), back, every=1, tz=HST)
+    ps += nights(HOME, back + dt.timedelta(days=1), MOVED, every=7)
+    assert len(eras(ps, min_votes=10)) == 1
+    before, stay, after = eras(ps, min_votes=3)
+    assert (before.home, before.inferred, after.home, after.inferred) == (HOME, False, HOME, False)
+    assert stay.inferred and km(stay.home, FAR) < 0.2
+
+
 # on the synthetic fixture
+
+
+@pytest.mark.parametrize("lib", ["a", "b"])
+def test_synthetic_libraries_have_one_home(lib):
+    ps, _ = apply_all(getattr(synth.generate(), lib))
+    a = infer(ps)
+    [era] = home_eras(ps, a, now_utc=max(p.utc_epoch for p in ps))
+    assert (era.since_utc, era.home, era.work, era.inferred) == (None, a.home, a.work, False)
 
 
 @pytest.mark.parametrize(("lib", "work"), [("a", synth.WORK_A), ("b", synth.WORK_B)])

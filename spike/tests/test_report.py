@@ -13,7 +13,7 @@ from photoquiz import synth
 from photoquiz.anchors import infer_anchors
 from photoquiz.cli import _read_sweep, _write_sweep, app
 from photoquiz.filters import FilterStats, apply_all
-from photoquiz.models import PhotoMeta, TripWindow
+from photoquiz.models import OLD_HOME, Era, PhotoMeta, TripWindow
 from photoquiz.report import (
     Coverage,
     Evaluation,
@@ -191,6 +191,7 @@ def test_varied_names_what_changed():
     assert varied(Params(), Params()) == "defaults"
     assert varied(Params(city_km=50.0), Params()) == "city_km=50"
     assert varied(Params(gap_hours=12, min_photos=3), Params()) == "gap_hours=12, min_photos=3"
+    assert varied(Params(past_homes=False), Params()) == "past_homes=false"
 
 
 def row(precision: float, recall: float, merges: int = 0, splits: int = 0, **params) -> SweepRow:
@@ -253,10 +254,29 @@ def test_synthetic_silence_cap_splits_tahoe_by_night(fixture):
     assert (r.ev.splits, r.ev.precision, r.ev.recall) == (1, 1.0, 1.0)
 
 
+def test_sweep_leaves_old_home_days_out_of_the_score(fixture):
+    """Pretend both partners lived at Lake Tahoe for the trip's days: Tahoe becomes old-home days,
+    which are neither trips nor false positives, so only a missed label. Without past homes it is a trip."""
+    a, b, an_a, an_b, labels = fixture
+    lo, hi = label_span(labels[0])  # tahoe
+    eras = {
+        f"eras_{x.person}": [
+            Era(None, x.home, x.work, False, 30),
+            Era(lo, synth.TAHOE, None, True, 3),
+            Era(hi, x.home, x.work, False, 30),
+        ]
+        for x in (an_a, an_b)
+    }
+    points = [Params(), Params(past_homes=False)]
+    with_past, without = sweep(points, labels, an_a, an_b, ps_a=a, ps_b=b, salt=SALT, **eras)
+    assert (with_past.trips, with_past.ev.precision, with_past.ev.false_negatives) == (3, 1.0, 1)
+    assert (without.trips, without.ev.precision, without.ev.recall) == (4, 1.0, 1.0)
+
+
 # report
 
 
-def reported(*, make: str | None = "Apple", rows=()) -> str:
+def reported(*, make: str | None = "Apple", rows=(), old_home: int = 0) -> str:
     ps = [photo(make=make), photo(JUL_10 - DAY, gps=False, make=make)]
     cov = {"a": coverage(ps), "b": coverage(ps[:1])}
     travel = {p: coverage(in_labels([photo(make=make)], [TAHOE])) for p in "ab"}
@@ -265,7 +285,7 @@ def reported(*, make: str | None = "Apple", rows=()) -> str:
         "b": [FilterStats("screenshot", 0)],  # a rule b lacks still gets a row
     }
     ev = evaluate([trip(JUL_10, JUL_10 + 3600), trip(0, 1)], [TAHOE])
-    return render(cov, stats, ev, travel=travel, sweep=rows)
+    return render(cov, stats, ev, travel=travel, sweep=rows, old_home=old_home)
 
 
 def test_report_holds_the_gate_and_the_counts():
@@ -278,6 +298,8 @@ def test_report_holds_the_gate_and_the_counts():
     assert "| All photos | 50.0% (1 / 2) | 100.0% (1 / 1) |" in md
     assert "| 2026 | 50.0% (1 / 2) | 100.0% (1 / 1) |" in md
     assert "Not run, or older" in md and "unavailable" not in md
+    assert "| Old-home days (not scored) | 0 |" in md
+    assert "| Old-home days (not scored) | 3 |" in reported(old_home=3)
 
 
 def test_report_says_unavailable_for_an_ios_export():
@@ -361,6 +383,17 @@ def test_cli_report_names_what_to_hand_check_on_the_terminal_only(pipeline):
     assert "merged: 2026-07-10 14:00Z..2026-07-13 02:00Z covers tahoe, tahoe-2" in out.output
     md = (pipeline / "spike_report.md").read_text()
     assert "big-sur" not in md and "| Merges (1 detected : n labeled) | 1 |" in md
+
+
+def test_cli_report_leaves_old_home_days_out_of_the_score(pipeline):
+    path = pipeline / "trips.json"
+    ws = json.loads(path.read_text())
+    day = {**ws[0], "start_utc": 0, "end_utc": 3600, "away_reason": "old home: shared home then", "kind": OLD_HOME}
+    path.write_text(json.dumps([*ws, day]))
+    out = CliRunner().invoke(app, ["report", "--min-precision", "1.0", "--data", str(pipeline)])
+    assert out.exit_code == 0 and "precision=1.00 recall=1.00 tp=4 fp=0" in out.output
+    assert "old-home days: 1, not scored" in out.output and "no label:" not in out.output
+    assert "| Old-home days (not scored) | 1 |" in (pipeline / "spike_report.md").read_text()
 
 
 def test_cli_report_names_a_detection_no_label_covers(pipeline):

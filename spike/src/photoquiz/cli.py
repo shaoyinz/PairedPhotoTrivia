@@ -13,7 +13,7 @@ import os
 import secrets
 import tempfile
 import tomllib
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from functools import partial
 from pathlib import Path
 from typing import Annotated
@@ -24,7 +24,7 @@ from photoquiz import anchors as anchors_mod
 from photoquiz import buckets, commute, filters, matching, report, synth, trips
 from photoquiz.ingest import read_csv, read_parquet, summarize, write_csv, write_parquet
 from photoquiz.library import read_library
-from photoquiz.models import Anchors, BucketHash, LatLon, TripWindow
+from photoquiz.models import TRIP, Anchors, BucketHash, Era, LatLon, PhotoMeta, TripWindow
 from photoquiz.project import distance_km
 from photoquiz.schema import LABEL_COLUMNS, SchemaError
 
@@ -39,6 +39,27 @@ DataDir = Annotated[Path, typer.Option("--data", help="Local data directory (git
 
 def _fmt_utc(t: int | None) -> str:
     return "—" if t is None else dt.datetime.fromtimestamp(t, dt.UTC).strftime("%Y-%m-%d %H:%MZ")
+
+
+def _fmt_day(t: int | None) -> str:
+    return "" if t is None else dt.datetime.fromtimestamp(t, dt.UTC).strftime("%Y-%m-%d")
+
+
+def _eras(ps: list[PhotoMeta], a: Anchors) -> list[Era]:
+    """The partner's home history over the whole export, ending with the anchors file's home."""
+    return anchors_mod.home_eras(ps, a, now_utc=max(p.utc_epoch for p in ps if p.utc_epoch is not None))
+
+
+def _eras_line(person: str, eras: list[Era]) -> str:
+    """Terminal only: when each home held and the evenings behind it, e.g.
+    "past home ..2026-08-03 (412 evenings), current home 2026-08-03.. (9 evenings)". Dates, never places."""
+    if len(eras) == 1:
+        return f"  homes {person}: one home throughout"
+    spans = [
+        f"{'past' if e.inferred else 'current'} home {_fmt_day(e.since_utc)}..{_fmt_day(nxt)} ({e.nights} evenings)"
+        for e, nxt in zip(eras, [e.since_utc for e in eras[1:]] + [None])
+    ]
+    return f"  homes {person}: " + ", ".join(spans)
 
 
 def _salt(data: Path) -> bytes:
@@ -359,10 +380,14 @@ def trips_cmd(
         int, typer.Option(help="A trip ends once each partner goes this long without a located photo.")
     ] = trips.MAX_SILENCE_HOURS,
     min_photos: int = trips.MIN_PHOTOS,
+    past_homes: Annotated[
+        bool, typer.Option("--past-homes/--no-past-homes", help="Judge each hour against the homes you had then.")
+    ] = True,
     data: DataDir = DEFAULT_DATA,
 ) -> None:
     """Map matched hashes back to A's own buckets, keep the away ones, join nights until someone is
-    back in their home city, apply the >= 5 rule -> trips.json."""
+    back in their home city, apply the >= 5 rule -> trips.json. Days at a home one of you has since
+    left go in too, as kind "old_home"."""
     anchors_a, anchors_b = _read_anchors(data / "anchors_a.toml"), _read_anchors(data / "anchors_b.toml")
     try:
         shared = commute.resolve_shared_home(anchors_a, anchors_b)
@@ -380,6 +405,10 @@ def trips_cmd(
     )
     ps_a = read_parquet(data / "a_filtered.parquet")
     ps_b = read_parquet(data / "b_filtered.parquet")
+    eras_a, eras_b = (_eras(ps_a, anchors_a), _eras(ps_b, anchors_b)) if past_homes else (None, None)
+    if past_homes:
+        for person, eras in (("a", eras_a), ("b", eras_b)):
+            typer.echo(_eras_line(person, eras))
     salt = _salt(data)
     matched = _read_hashes(data / "matched.txt")
     # Device-local step: A knows which of its own expanded keys produced each surviving hash.
@@ -396,6 +425,8 @@ def trips_cmd(
         reach_hours=reach_hours,
         city_km=city_km,
         max_silence_hours=max_silence_hours,
+        eras_a=eras_a,
+        eras_b=eras_b,
     )
     try:
         away, ws = assemble(min_photos=0), assemble(min_photos=min_photos)  # away: before the >= min_photos rule
@@ -403,8 +434,9 @@ def trips_cmd(
         typer.echo(f"trips: {e}", err=True)
         raise typer.Exit(2) from e
     (data / "trips.json").write_text(json.dumps([asdict(w) for w in ws], indent=2))
+    found = sum(w.kind == TRIP for w in ws)
     typer.echo(
-        f"trips: matched_keys={len(matched_keys)} away={len(away)} trips={len(ws)} "
+        f"trips: matched_keys={len(matched_keys)} away={len(away)} trips={found} old_home={len(ws) - found} "
         f"(gap > {gap_hours} h, reach {reach_hours} h, silence <= {max_silence_hours} h, >= {min_photos} photos)"
     )
     for w in away:
@@ -431,10 +463,13 @@ def report_cmd(
         p: [filters.FilterStats(**s) for s in json.loads((data / f"{p}_filter_stats.json").read_text())]
         for p in ("a", "b")
     }
-    ws = [TripWindow(**w) for w in json.loads((data / "trips.json").read_text())]
+    detected = [TripWindow(**w) for w in json.loads((data / "trips.json").read_text())]
+    ws = [w for w in detected if w.kind == TRIP]  # old-home days are quiz material, not trips to score
+    old_home = len(detected) - len(ws)
     ev = report.evaluate(ws, labels)
     rows, swept = _sweep_if_fresh(data)
-    (data / "spike_report.md").write_text(report.render(cov, fstats, ev, travel=travel, sweep=rows))
+    md = report.render(cov, fstats, ev, travel=travel, sweep=rows, old_home=old_home)
+    (data / "spike_report.md").write_text(md)
     typer.echo(
         f"report: precision={ev.precision:.2f} recall={ev.recall:.2f} "
         f"tp={ev.true_positives} fp={ev.false_positives} fn={ev.false_negatives} "
@@ -442,6 +477,8 @@ def report_cmd(
     )
     for line in _hand_check(ws, labels, ev):
         typer.echo(f"  {line}")
+    if old_home:
+        typer.echo(f"  old-home days: {old_home}, not scored")
     if ev.precision < min_precision or ev.recall < min_recall:
         typer.echo("report: below threshold", err=True)
         raise typer.Exit(1)
@@ -451,15 +488,21 @@ def report_cmd(
 def sweep_cmd(data: DataDir = DEFAULT_DATA) -> None:
     """Rerun buckets -> match -> trips one parameter at a time around the defaults (gap hours,
     geohash precision, min photos, home-city radius, silence cap), then home-city radius and
-    silence cap together. Score each run against labels.csv -> sweep.json, which `report` renders."""
+    silence cap together, and once without past homes if either partner has one. Score each run
+    against labels.csv -> sweep.json, which `report` renders."""
     labels = _labels_or_exit(data, "sweep")
     anchors_a, anchors_b = _read_anchors(data / "anchors_a.toml"), _read_anchors(data / "anchors_b.toml")
     ps_a = read_parquet(data / "a_filtered.parquet")
     ps_b = read_parquet(data / "b_filtered.parquet")
+    eras_a, eras_b = _eras(ps_a, anchors_a), _eras(ps_b, anchors_b)
     points = report.grid()
+    if len(eras_a) > 1 or len(eras_b) > 1:
+        points.append(replace(points[0], past_homes=False))
     rows = []
     try:
-        for r in report.sweep(points, labels, anchors_a, anchors_b, ps_a=ps_a, ps_b=ps_b, salt=_salt(data)):
+        for r in report.sweep(
+            points, labels, anchors_a, anchors_b, ps_a=ps_a, ps_b=ps_b, salt=_salt(data), eras_a=eras_a, eras_b=eras_b
+        ):
             rows.append(r)
             typer.echo(
                 f"  {report.varied(r.params, points[0])}: trips={r.trips} precision={r.ev.precision:.2f} "

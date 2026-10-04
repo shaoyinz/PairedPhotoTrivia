@@ -64,6 +64,22 @@ class Anchors:
 
 
 @dataclass(frozen=True, slots=True)
+class Era:
+    """One stretch of a partner's home history (§1.5): this home and work from since_utc until the
+    next era starts. The last era is always the confirmed anchors; past homes are inferred."""
+
+    since_utc: int | None  # None = from the start of the library
+    home: LatLon
+    work: LatLon | None
+    inferred: bool  # True: a past home, never shown to the user; False: the anchors file's home
+    nights: int  # distinct evenings or nights seen near home during the era (§1.5): its support
+
+
+TRIP = "trip"
+OLD_HOME = "old_home"  # a day at a home one of you has since left (§1.7): quiz material, never scored
+
+
+@dataclass(frozen=True, slots=True)
 class TripWindow:
     start_utc: int
     end_utc: int
@@ -72,3 +88,4 @@ class TripWindow:
     photo_count_b: int
     representative_geohash6: str
     away_reason: str
+    kind: str = TRIP  # TRIP or OLD_HOME

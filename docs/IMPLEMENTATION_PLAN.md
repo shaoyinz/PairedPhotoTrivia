@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Derived from `docs/PRD.md`. Last updated: 2026-10-02.
+Derived from `docs/PRD.md`. Last updated: 2026-10-04.
 
 Phase 1 (the Python spike) is specified in detail because it is the current phase and the
 first gate. Phases 2–4 are sequenced and scoped, but deliberately left coarser: the spike's
@@ -34,9 +34,9 @@ off without scrolling past the other eight. This document keeps the framing and 
 | [1.2 Export](plan/1.2-export.md) | iOS exporter (primary), osxphotos (alternative), one CSV schema |
 | [1.3 Filters](plan/1.3-filters.md) | Screenshots, missing metadata, burst dupes — each countable |
 | [1.4 Buckets and matching](plan/1.4-buckets-and-matching.md) | geohash6 × hour, salted hashes, one-sided expansion |
-| [1.5 Anchors](plan/1.5-anchors.md) | Home and work inference from local hours |
+| [1.5 Anchors](plan/1.5-anchors.md) | Home and work inference from local hours; past homes, inferred |
 | [1.6 Away rule](plan/1.6-away-rule.md) | Commute buffer and what counts as away |
-| [1.7 Trip assembly](plan/1.7-trip-assembly.md) | Away sessions joined across nights until back in the home city, ≥ 5 photos, backfill |
+| [1.7 Trip assembly](plan/1.7-trip-assembly.md) | Away sessions joined across nights until back in the home city, ≥ 5 photos, backfill; old-home days |
 | [1.8 Labels and evaluation](plan/1.8-evaluation.md) | Precision, recall, split/merge, GPS coverage, sweep |
 | [1.9 Tests](plan/1.9-tests.md) | Unit tests and the vectors the Swift port reuses |
 
@@ -89,8 +89,14 @@ the report.
       show the trip list with a tier-3 "were you two together?" confirm step. Clustering
       ([§1.7](plan/1.7-trip-assembly.md)) also needs a few bits from each phone: per matched bucket, in my buffer / in my
       home city; per gap between out-of-town sessions, seen back in my city / kept taking
-      located photos. Exchange those bits, never the anchors
-- [ ] Home/work confirm-and-edit screen
+      located photos. Exchange those bits, never the anchors. With a home history ([§1.5](plan/1.5-anchors.md)), the
+      buffer bit is "in my buffer then" plus "in my buffer now", which is what marks an old-home day
+- [ ] Past homes per phone: each phone infers its own history ([§1.5](plan/1.5-anchors.md)) and never shares it.
+      Whether a past pair of homes was one shared home is decided in the spike by distance, which needs
+      both homes on one phone. Decide how phase 2 learns it without that, e.g. by comparing salted
+      cells of each era's home the way buckets are compared
+- [ ] Home/work confirm-and-edit screen: the current home only, as one search field (zip, city or
+      address) and a pin the user can drag. Past homes are never shown or asked for (PRD)
 - [ ] Two-phone check: same trip list on both devices, no coordinates or raw timestamps in the
       CloudKit dashboard (inspect it and confirm)
 
@@ -98,7 +104,8 @@ the report.
 
 **Gate:** one full week played by the two of you.
 
-- [ ] Round generation: 5 photos from one trip, preferring the partner's photos
+- [ ] Round generation: 5 photos from one trip, preferring the partner's photos; now and then an
+      old-home day instead ([§1.7](plan/1.7-trip-assembly.md)). The mix is a tuning target
 - [ ] Veto screen — owner previews and skips before anything uploads; upload only on approve
 - [ ] Where: MapKit pin guess, full points ≤ 1 km decaying to zero at 500 km
 - [ ] When: year → month → day, points per level
@@ -128,7 +135,7 @@ the report.
 | Trips merge or split badly | Split/merge counts at the gate | Tune the home-city radius and silence cap ([§1.7](plan/1.7-trip-assembly.md)); DBSCAN on space × time only if that fails |
 | CKShare friction or quotas | Phase 2 two-phone test | Minimal backend (e.g. Supabase) holding only hashes |
 | App Review on photo access | Submission | On-device processing, explained in the purpose string |
-| Anchor inference wrong | Phase 1 anchors output | Confirm/edit UI is already P0; keep it prominent |
+| Anchor inference wrong | Phase 1 anchors output; a move inside the 90-day window; few night photos | Confirm/edit UI is already P0; keep it prominent |
 
 ## Open items for the plan itself
 
@@ -141,3 +148,6 @@ the report.
       coverage report locally and send only salted hashes plus aggregate stats. Matching needs
       nothing more, and it tests the privacy model instead of bypassing it
 - [ ] Dark/blurry filtering needs pixel access; deferred to phase 2, not dropped
+- [ ] Night hours for the current home: [00:00, 06:00) in [§1.5](plan/1.5-anchors.md), but a real library
+      can have a located photo there on only a few nights a year, so its current home can rest on a
+      single night. The home history already votes over [20:00, 06:00). Decide whether the current home follows

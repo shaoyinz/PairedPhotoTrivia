@@ -15,7 +15,7 @@ from dataclasses import dataclass, fields, replace
 from photoquiz.buckets import GEOHASH_PRECISION, matched_keys, own_keys, salted_set
 from photoquiz.filters import FilterStats
 from photoquiz.matching import match
-from photoquiz.models import Anchors, BucketKey, PhotoMeta, TripWindow
+from photoquiz.models import TRIP, Anchors, BucketKey, Era, PhotoMeta, TripWindow
 from photoquiz.trips import CITY_KM, GAP_HOURS, MAX_SILENCE_HOURS, MIN_PHOTOS, REACH_HOURS, assemble
 
 PRECISION_GATE = 0.9  # phase-1 gate
@@ -146,6 +146,7 @@ class Params:
     min_photos: int = MIN_PHOTOS
     city_km: float = CITY_KM
     max_silence_hours: int = MAX_SILENCE_HOURS
+    past_homes: bool = True  # judge each bucket against the homes of its hour (§1.5); False = anchors only
 
 
 # Gaps start at 6 because assemble needs 2 * reach_hours <= gap_hours.
@@ -190,11 +191,15 @@ def sweep(
     ps_a: Sequence[PhotoMeta],
     ps_b: Sequence[PhotoMeta],
     salt: bytes,
+    eras_a: Sequence[Era] | None = None,
+    eras_b: Sequence[Era] | None = None,
 ) -> Iterator[SweepRow]:
     """Run buckets -> match -> trips at each point and score it, one row at a time.
 
     The pipeline's own path: A expanded, B raw, both salted, intersected blind, mapped back on
     A's side. Matching is redone once per geohash precision; the other parameters only re-assemble.
+    The home histories apply where `past_homes` is set. Old-home days are left out of the score
+    and of the trip count.
     """
     keys: dict[int, list[BucketKey]] = {}
     for p in points:
@@ -213,8 +218,11 @@ def sweep(
             city_km=p.city_km,
             max_silence_hours=p.max_silence_hours,
             min_photos=p.min_photos,
+            eras_a=eras_a if p.past_homes else None,
+            eras_b=eras_b if p.past_homes else None,
         )
-        yield SweepRow(p, len(ws), evaluate(ws, labels))
+        trips = [w for w in ws if w.kind == TRIP]
+        yield SweepRow(p, len(trips), evaluate(trips, labels))
 
 
 def best(rows: Sequence[SweepRow]) -> SweepRow:
@@ -244,7 +252,10 @@ def every(p: Params) -> str:
 
 
 def _describe(p: Params, keep: Callable[[str], bool]) -> str:
-    return ", ".join(f"{f.name}={getattr(p, f.name):g}" for f in fields(Params) if keep(f.name))
+    def value(v: float | bool) -> str:
+        return str(v).lower() if isinstance(v, bool) else f"{v:g}"
+
+    return ", ".join(f"{f.name}={value(getattr(p, f.name))}" for f in fields(Params) if keep(f.name))
 
 
 # rendering
@@ -278,11 +289,13 @@ def render(
     *,
     travel: Mapping[str, Coverage],
     sweep: Sequence[SweepRow] = (),
+    old_home: int = 0,
 ) -> str:
     """Markdown for data/spike_report.md: numbers only, no raw rows.
 
     `cov` and `travel` are per person and cover the photos the filters kept; `travel` only those
-    inside a labeled trip. `sweep` is empty until `photoquiz sweep` has run.
+    inside a labeled trip. `sweep` is empty until `photoquiz sweep` has run. `old_home` counts the
+    old-home days found next to the trips, which `ev` leaves out.
     """
     people = list(cov)
     travel_gps = sum(c.with_gps for c in travel.values())
@@ -319,6 +332,7 @@ def render(
             ("Missed labels", str(ev.false_negatives)),
             ("Splits (n detected : 1 labeled)", str(ev.splits)),
             ("Merges (1 detected : n labeled)", str(ev.merges)),
+            ("Old-home days (not scored)", str(old_home)),
         ],
     )
 

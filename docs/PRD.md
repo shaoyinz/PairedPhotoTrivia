@@ -1,6 +1,6 @@
 # Couples Photo Quiz — MVP PRD
 
-Last updated: 2026-10-01
+Last updated: 2026-10-04
 
 ## Overview
 
@@ -44,13 +44,15 @@ GPS is not actually less reliable than timestamps. Photos from your own iPhone c
 | 2 | Time + visual similarity | Where time windows overlap but one side lacks GPS: on-device image embeddings (Vision feature prints or MobileCLIP), compared only within those windows | Medium; generic scenes (beaches, restaurant tables) cause false matches | P1 |
 | 3 | User confirmation | "Were you two together Mar 3–7?" | Highest | P0 |
 
-**Trip assembly:** Infer each partner's home (most frequent nighttime location) and work (most frequent weekday daytime location) over the last 90 days. Users confirm or edit both in the app, since iOS doesn't give apps the Home and Work places set in Maps. Draw a 5 km buffer around each partner's home–work commute. If the two homes are far apart, a spot outside either partner's buffer counts, so visiting each other counts; if they share a home, it must be outside both. A window counts as a trip when it is matched (tier 1–3) under this rule and has at least 5 photos across both devices. There is no minimum duration, so local dates count. A trip away from home continues across nights until either partner is seen back in their home city (about 25 km around home and work), so a multi-day trip stays one trip even when nobody takes photos overnight. Once a trip is confirmed, include both partners' photos from that window, even unmatched ones. This covers the common case where only one partner takes photos.
+**Trip assembly:** Infer each partner's home (most frequent nighttime location) and work (most frequent weekday daytime location) over the last 90 days. Users confirm or edit both in the app, since iOS doesn't give apps the Home and Work places set in Maps. Editing is one search field that takes a zip code, a city or an address, then a pin they can drag; it only needs to land within a km or two. The app asks for the current home only. Draw a 5 km buffer around each partner's home–work commute. If the two homes are far apart, a spot outside either partner's buffer counts, so visiting each other counts; if they share a home, it must be outside both. A window counts as a trip when it is matched (tier 1–3) under this rule and has at least 5 photos across both devices. There is no minimum duration, so local dates count. A trip away from home continues across nights until either partner is seen back in their home city (about 25 km around home and work), so a multi-day trip stays one trip even when nobody takes photos overnight. Once a trip is confirmed, include both partners' photos from that window, even unmatched ones. This covers the common case where only one partner takes photos.
+
+**Past homes and old-home days:** The app never asks where you used to live. It infers past homes from where each partner's evening and night photos cluster across the whole library, and judges every photo against the home that partner had when it was taken, so a trip taken while living somewhere else is measured from that home. Everyday moments at a home you have since left are not excluded: they hold memories too. They become old-home days, each at most about a day and never joined across nights, under the same ≥ 5 photo rule. Old-home days are quiz material, but rounds come mostly from trips.
 
 **Filters:** Drop screenshots, images without capture metadata, burst duplicates, and very dark or blurry shots.
 
 ## Quiz gameplay
 
-Each round is 5 photos from one trip, preferring photos your partner took. Scoring values below are starting points to tune.
+Each round is 5 photos from one trip, preferring photos your partner took; now and then a round comes from an old-home day instead. Scoring values below are starting points to tune.
 
 - **Where:** Drop a pin on a map. Full points within 1 km, decaying to zero at 500 km.
 - **When:** Pick year, then month, then day; points for each level you get right.
@@ -86,7 +88,7 @@ P0 is only what the core loop needs; everything else waits until the loop is val
 
 Only salted bucket hashes, owner-approved quiz photos, and memory journal entries the author chooses to share ever leave the phone.
 
-- **Stays on device:** Original photos, exact coordinates, raw timestamps, image embeddings (P1: exchanged only for candidate time windows), unshared memory journal entries.
+- **Stays on device:** Original photos, exact coordinates, raw timestamps, home and work (current and inferred past homes), image embeddings (P1: exchanged only for candidate time windows), unshared memory journal entries.
 - **Shared with partner:** Salted hashes of time-location buckets; approved quiz photos; memory journal entries the author shares (P1); scores. All stored in the pair's CloudKit shared zone.
 - **Salt:** Generated at pairing and kept on the two devices. Bucket hashes are low-entropy, so anyone holding the salt could brute-force them; never store it server-side.
 - **Unpairing:** Deletes the shared zone, with all quiz photos and shared journal entries in it. Each partner keeps their own entries locally; entries on the other partner's photos keep only their text.
@@ -144,3 +146,5 @@ The first gate is trip-detection accuracy on your own two libraries; nothing els
   - Different homes: outside either partner's buffer counts, so visits count. Shared home: must be outside both.
 - [x] Should memory journal entries sync to the partner?
   - Local by default. The author can share any entry, and only shared entries sync.
+- [x] What about places you used to live?
+  - Only the current home is asked for. Past homes are inferred, and everyday moments there become old-home days for the quiz, rather than trips or exclusions.

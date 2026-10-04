@@ -1,5 +1,6 @@
 """§1.7: away buckets in sessions, joined across nights until someone is back in their home city,
-then the reach, backfill and the >= 5 rule."""
+then the reach, backfill and the >= 5 rule; each hour judged against the homes you had then, and
+old-home days."""
 
 import datetime as dt
 import json
@@ -9,15 +10,16 @@ import pytest
 from typer.testing import CliRunner
 
 from photoquiz import synth
-from photoquiz.anchors import infer_anchors
+from photoquiz.anchors import home_eras, infer_anchors
 from photoquiz.buckets import bucket_key, expand, matched_keys, matched_photos, own_keys, salted_set
 from photoquiz.cli import app
 from photoquiz.commute import commute_buffer
 from photoquiz.filters import apply_all
 from photoquiz.matching import match
-from photoquiz.models import Anchors, BucketKey, LatLon, PhotoMeta, TripWindow
+from photoquiz.models import OLD_HOME, TRIP, Anchors, BucketKey, Era, LatLon, PhotoMeta, TripWindow
 from photoquiz.trips import (
     CITY_KM,
+    Homes,
     assemble,
     backfill,
     cell_center,
@@ -126,9 +128,7 @@ NIGHT = (H + 10) * 3600
 
 
 def join(sessions, ps_a=(), ps_b=(), *, apart=False, **kw):
-    homes = (HOME, None, B_HOME, None) if apart else (HOME, WORK, HOME, None)
-    city_a, city_b = commute_buffer(*homes[:2], CITY_KM), commute_buffer(*homes[2:], CITY_KM)
-    return join_nights(sessions, city_a, city_b, shared_home=not apart, ps_a=ps_a, ps_b=ps_b, **kw)
+    return join_nights(sessions, Homes.of(*(APART if apart else SHARED)), ps_a=ps_a, ps_b=ps_b, **kw)
 
 
 def test_a_silent_night_out_of_town_joins_the_days():
@@ -317,6 +317,93 @@ def test_backfill_reaches_what_one_partner_shot_alone():
     assert (w.photo_count_a, w.photo_count_b) == (2, 3)
 
 
+# home history: a home in OLD_CITY until MOVE, then the anchors' homes
+
+OLD_CITY = LatLon(47.6062, -122.3321)  # ~1,100 km from HOME
+MOVE = H + 1000  # an hour index; H and the days after it come before the move
+
+
+def lived(then_a: LatLon = OLD_CITY, then_b: LatLon = OLD_CITY, homes=SHARED, move: int = MOVE) -> dict:
+    """Each partner's eras: a past home until `move`, then their anchors' home."""
+    return {
+        f"eras_{x.person}": [Era(None, then, None, True, 30), Era(move * 3600, x.home, x.work, False, 30)]
+        for x, then in zip(homes, (then_a, then_b))
+    }
+
+
+def test_a_day_at_a_home_you_have_since_left_is_an_old_home_day():
+    [w] = assemble([key(OLD_CITY, H)], *SHARED, ps_a=shots("a", 3), ps_b=shots("b", 2), **lived())
+    assert (w.kind, w.away_reason) == (OLD_HOME, "old home: shared home then")
+    assert (w.start_utc, w.end_utc, w.representative_geohash6) == (*window([key(OLD_CITY, H)]), cell(OLD_CITY))
+
+
+def test_without_a_home_history_the_old_home_is_a_trip():
+    [w] = assemble([key(OLD_CITY, H)], *SHARED, ps_a=shots("a", 3), ps_b=shots("b", 2))
+    assert (w.kind, w.away_reason) == (TRIP, "shared home: out of town, 1 session")
+
+
+@pytest.mark.parametrize(
+    ("place", "hour", "reason"),
+    [
+        (TAHOE, H, "shared home then: out of town, 1 session"),  # a trip while living in the old city
+        (HOME, H, "shared home then: out of town, 1 session"),  # a visit to the city you later moved to
+        (OLD_CITY, MOVE + 10, "shared home: out of town, 1 session"),  # back for a visit after the move
+    ],
+)
+def test_each_hour_is_judged_against_the_homes_you_had_then(place, hour, reason):
+    [w] = assemble([key(place, hour)], *SHARED, ps_a=shots("a", 5, hour), ps_b=[], **lived())
+    assert (w.kind, w.away_reason) == (TRIP, reason)
+
+
+def test_home_now_is_neither_a_trip_nor_an_old_home_day():
+    assert assemble([key(HOME, MOVE + 10)], *SHARED, ps_a=shots("a", 5, MOVE + 10), ps_b=[], **lived()) == []
+
+
+def test_old_home_days_never_join_across_nights():
+    days = [key(OLD_CITY, H), key(OLD_CITY, H + 20)]
+    ws = assemble(days, *SHARED, ps_a=shots("a", 5, H) + shots("a", 5, H + 20), ps_b=[], **lived())
+    assert [(w.kind, w.matched_bucket_count) for w in ws] == [(OLD_HOME, 1), (OLD_HOME, 1)]
+
+
+def test_where_an_old_home_day_would_overlap_a_trip_the_trip_wins():
+    """Back from a day trip, photos at home that evening: windows H-3..H+4 and H+2..H+9."""
+    trip_day, evening = [key(TAHOE, H)], [key(OLD_CITY, H + 5)]
+    ps_a = shots("a", 5, H) + shots("a", 5, H + 5)
+    assert [w.kind for w in assemble(trip_day + evening, *SHARED, ps_a=ps_a, ps_b=[], **lived())] == [TRIP]
+    assert [w.kind for w in assemble(evening, *SHARED, ps_a=ps_a, ps_b=[], **lived())] == [OLD_HOME]
+
+
+@pytest.mark.parametrize(("n", "kept"), [(4, False), (5, True)])
+def test_an_old_home_day_needs_min_photos_too(n, kept):
+    assert bool(assemble([key(OLD_CITY, H)], *SHARED, ps_a=shots("a", n), ps_b=[], **lived())) is kept
+
+
+@pytest.mark.parametrize(("where", "joined"), [(OLD_CITY, False), (HOME, True)])
+def test_a_trip_from_a_past_home_ends_back_in_that_city(where, joined):
+    """Before the move, a night at today's home is just somewhere else; a night in the old city is home."""
+    homes = Homes.of(*SHARED, **lived())
+    got = join_nights([DAY_1, DAY_2], homes, ps_a=[photo("a", NIGHT, at=where)], ps_b=[])
+    assert got == ([DAY_1 + DAY_2] if joined else [DAY_1, DAY_2])
+
+
+def test_the_shared_home_override_holds_only_for_confirmed_homes():
+    """Told they live together now, though 43 km apart; their past homes, never confirmed, go by distance."""
+    told = anchors("a", HOME, shared_home=True), anchors("b", B_HOME)
+    homes = Homes.of(*told, **lived(then_b=LatLon(OLD_CITY.lat + 0.4, OLD_CITY.lon), homes=told))  # 44 km then
+    assert homes.now.shared_home and not homes.now.past
+    assert not homes.at(H * 3600).shared_home and homes.at(H * 3600).past
+    assert Homes.of(*told, **lived(homes=told)).at(H * 3600).shared_home  # one old home: shared then
+
+
+def test_each_partner_moves_on_their_own_date():
+    later = Era((MOVE + 100) * 3600, HOME, None, False, 30)
+    homes = Homes.of(*SHARED, **(lived() | {"eras_b": [Era(None, OLD_CITY, None, True, 30), later]}))
+    assert homes.changes == (MOVE * 3600, (MOVE + 100) * 3600)
+    between = homes.at((MOVE + 50) * 3600)
+    assert between.past and not between.shared_home  # A home already, B still in the old city
+    assert homes.at(MOVE * 3600 - 1).shared_home and homes.now.shared_home and not homes.now.past
+
+
 # on the synthetic fixture
 
 
@@ -382,6 +469,16 @@ def test_synthetic_monterey_backfills_all_of_as_photos(fixture):
     assert len(matched_photos(a, monterey, expanded=True)) == 3  # A's other 5 come from backfill
 
 
+def test_synthetic_home_history_changes_nothing(fixture):
+    """One home each, so judging each hour against the homes of the time is judging it against the anchors."""
+    a, b, an_a, an_b, keys = fixture
+    eras = {
+        f"eras_{an.person}": home_eras(ps, an, now_utc=max(p.utc_epoch for p in ps))
+        for ps, an in ((a, an_a), (b, an_b))
+    }
+    assert assemble(keys, an_a, an_b, ps_a=a, ps_b=b, **eras) == assemble(keys, an_a, an_b, ps_a=a, ps_b=b)
+
+
 def test_synthetic_windows_never_overlap(fixture):
     a, b, an_a, an_b, keys = fixture
     ws = assemble(keys, an_a, an_b, ps_a=a, ps_b=b, min_photos=0)
@@ -403,7 +500,10 @@ def test_cli_writes_trips_json(tmp_path):
         assert run(app, args).exit_code == 0, args
     out = run(app, ["trips", *d])
     assert out.exit_code == 0
-    assert "away=5 trips=4" in out.output and out.output.count("under 5 photos:") == 1
+    assert "away=5 trips=4 old_home=0" in out.output and out.output.count("under 5 photos:") == 1
+    assert "homes a: one home throughout" in out.output and "homes b: one home throughout" in out.output
     ws = [TripWindow(**w) for w in json.loads((tmp_path / "trips.json").read_text())]
     assert [dates(w)[0] for w in ws] == [synth.NAPA_DAY, synth.SANTA_CRUZ_DAY, synth.MONTEREY_DAY, synth.TAHOE_DAYS[0]]
     assert run(app, ["trips", "--gap-hours", "4", *d]).exit_code == 2  # reach 3 > half of 4
+    out = run(app, ["trips", "--no-past-homes", *d])
+    assert out.exit_code == 0 and "trips=4" in out.output and "homes a:" not in out.output

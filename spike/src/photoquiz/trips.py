@@ -1,33 +1,119 @@
-"""Matched buckets -> trips (§1.7).
+"""Matched buckets -> trips and old-home days (§1.7).
 
 Device-local, like `buckets.py`. Four steps:
 
-1. Keep the matched buckets that are away (§1.6), each tested at its geohash-6 cell center.
+1. Keep the matched buckets that are away (§1.6), each tested at its geohash-6 cell center
+   against the homes the two of you had at that hour (§1.5's home history).
 2. Sessionize them: a gap of more than GAP_HOURS starts a new session.
 3. Join out-of-town sessions across the nights between them. A trip ends when either partner is
    seen back in their home city (CITY_KM around home->work), not when the photos pause.
 4. Widen each trip by REACH_HOURS, backfill both partners' photos, keep it at >= MIN_PHOTOS.
 
-Every test reduces to per-partner bits: is this bucket in my buffer, in my home city; in this
-gap, was I seen back in my city, did I keep taking located photos. So in phase 2 each phone can
-answer for itself, and neither needs the other's home, work or photos.
+A bucket that was home then but is away now, at a home one of you has since left, goes into an
+old-home day instead: sessionized the same way, never joined across nights, and dropped where
+it would overlap a trip.
+
+Every test reduces to per-partner bits: is this bucket in my buffer then and now, in my home
+city; in this gap, was I seen back in my city, did I keep taking located photos. So in phase 2
+each phone can answer for itself, and neither needs the other's home, work or photos.
 """
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 import pygeohash as pgh
 
-from photoquiz.commute import CommuteBuffer, commute_buffer, is_away, resolve_shared_home
-from photoquiz.models import Anchors, BucketKey, LatLon, PhotoMeta, TripWindow
+from photoquiz.commute import CommuteBuffer, commute_buffer, is_away, is_shared_home, resolve_shared_home
+from photoquiz.models import OLD_HOME, Anchors, BucketKey, Era, LatLon, PhotoMeta, TripWindow
 
 GAP_HOURS = 6  # away buckets further apart than this start a new session
 REACH_HOURS = 3  # backfill reaches this far past a trip's first and last bucket; at most GAP_HOURS / 2
 CITY_KM = 25.0  # home city: within this of the home->work segment
 MAX_SILENCE_HOURS = 72  # a trip ends once each partner has gone this long without a located photo
 MIN_PHOTOS = 5
+
+
+@dataclass(frozen=True, slots=True)
+class Setting:
+    """Both partners' homes at one moment: commute buffers, home cities, and whether they shared one."""
+
+    buf_a: CommuteBuffer
+    buf_b: CommuteBuffer
+    city_a: CommuteBuffer
+    city_b: CommuteBuffer
+    shared_home: bool
+    past: bool  # either partner's home then is an inferred past home
+
+    def away(self, p: LatLon) -> bool:
+        return is_away(p, self.buf_a, self.buf_b, shared_home=self.shared_home)
+
+    def out_of_town(self, p: LatLon) -> bool:
+        """The away rule with the home cities in place of the buffers."""
+        return is_away(p, self.city_a, self.city_b, shared_home=self.shared_home)
+
+
+@dataclass(frozen=True, slots=True)
+class Homes:
+    """The Setting in force at any moment, from both partners' home histories (§1.5)."""
+
+    changes: tuple[int, ...]  # settings[i] holds from changes[i - 1] (from the start for i = 0)
+    settings: tuple[Setting, ...]  # one more than changes; the last is now
+
+    def at(self, t_utc: int) -> Setting:
+        return self.settings[bisect_right(self.changes, t_utc)]
+
+    @property
+    def now(self) -> Setting:
+        return self.settings[-1]
+
+    @staticmethod
+    def of(
+        anchors_a: Anchors,
+        anchors_b: Anchors,
+        *,
+        eras_a: Sequence[Era] | None = None,
+        eras_b: Sequence[Era] | None = None,
+        city_km: float = CITY_KM,
+    ) -> Homes:
+        """From each partner's eras (`anchors.home_eras`), or from the anchors alone when None.
+
+        While both homes are confirmed ones, the anchors files' shared_home override applies (§1.6).
+        Once either is an inferred past home, sharing goes by distance, since nobody confirmed it.
+        Raises ValueError when the two anchors files set shared_home differently.
+        """
+        shared_now = resolve_shared_home(anchors_a, anchors_b)
+        ea, eb = (
+            list(eras) if eras else [Era(None, x.home, x.work, False, x.home_nights)]
+            for eras, x in ((eras_a, anchors_a), (eras_b, anchors_b))
+        )
+        changes = sorted({e.since_utc for e in (*ea, *eb) if e.since_utc is not None})
+        settings = []
+        for t in (None, *changes):
+            a, b = _era_at(ea, t), _era_at(eb, t)
+            past = a.inferred or b.inferred
+            settings.append(
+                Setting(
+                    commute_buffer(a.home, a.work),
+                    commute_buffer(b.home, b.work),
+                    commute_buffer(a.home, a.work, city_km),
+                    commute_buffer(b.home, b.work, city_km),
+                    is_shared_home(a.home, b.home) if past else shared_now,
+                    past,
+                )
+            )
+        return Homes(tuple(changes), tuple(settings))
+
+
+def _era_at(eras: Sequence[Era], t: int | None) -> Era:
+    """The era holding at t; None = before every change, i.e. the first era (whose since_utc is None)."""
+    return [e for e in eras if e.since_utc is None or (t is not None and e.since_utc <= t)][-1]
+
+
+def _when(k: BucketKey) -> int:
+    return k.hour_index * 3600
 
 
 def sessionize(matched: Sequence[BucketKey], *, gap_hours: int = GAP_HOURS) -> list[list[BucketKey]]:
@@ -56,10 +142,10 @@ def cell_center(k: BucketKey) -> LatLon:
     return LatLon(c.latitude, c.longitude)
 
 
-def _out_of_town(ks: Sequence[BucketKey], city_a: CommuteBuffer, city_b: CommuteBuffer, shared_home: bool) -> list[LatLon]:
-    """Cell centers of the buckets outside the home cities, by the same rule as away (§1.6):
-    outside both cities with a shared home, outside either with different homes."""
-    return [c for k in ks if is_away(c := cell_center(k), city_a, city_b, shared_home=shared_home)]
+def _out_of_town(ks: Sequence[BucketKey], homes: Homes) -> list[LatLon]:
+    """Cell centers of the buckets outside the home cities of their hour, by the same rule as away
+    (§1.6): outside both cities with a shared home, outside either with different homes."""
+    return [c for k in ks if homes.at(_when(k)).out_of_town(c := cell_center(k))]
 
 
 def _gap_bits(
@@ -84,10 +170,8 @@ def _gap_bits(
 
 def join_nights(
     sessions: Sequence[Sequence[BucketKey]],
-    city_a: CommuteBuffer,
-    city_b: CommuteBuffer,
+    homes: Homes,
     *,
-    shared_home: bool,
     ps_a: Sequence[PhotoMeta],
     ps_b: Sequence[PhotoMeta],
     max_silence_hours: int = MAX_SILENCE_HOURS,
@@ -97,20 +181,22 @@ def join_nights(
     Two sessions join when both have a bucket out of town and, in the time between them, neither
     partner was seen back in their home city and at least one kept taking located photos (no
     stretch longer than max_silence_hours without one). Each partner's silence is timed alone, so
-    each phone can answer for itself. Sessions in town never join: you sleep at home.
+    each phone can answer for itself. Sessions in town never join: you sleep at home. The gap is
+    judged with the home cities in force at its start.
     """
     max_silence_s = max_silence_hours * 3600
     trips: list[list[BucketKey]] = []
     for s in sessions:
         if trips:
             prev = trips[-1]
-            spots = _out_of_town(prev, city_a, city_b, shared_home)
-            nxt = _out_of_town(s, city_a, city_b, shared_home)
+            spots = _out_of_town(prev, homes)
+            nxt = _out_of_town(s, homes)
             if spots and nxt:
                 lo, hi = (prev[-1].hour_index + 1) * 3600, s[0].hour_index * 3600
+                then = homes.at(lo)
                 (back_a, steady_a), (back_b, steady_b) = (
                     _gap_bits(lo, hi, city, ps, spots + nxt, max_silence_s)
-                    for city, ps in ((city_a, ps_a), (city_b, ps_b))
+                    for city, ps in ((then.city_a, ps_a), (then.city_b, ps_b))
                 )
                 if not (back_a or back_b) and (steady_a or steady_b):
                     prev.extend(s)
@@ -155,16 +241,16 @@ def _representative(ks: Sequence[BucketKey]) -> str:
     return min(hours, key=lambda g: (-hours[g], first[g], g))
 
 
-def _reason(
-    trip: Sequence[BucketKey], city_a: CommuteBuffer, city_b: CommuteBuffer, *, shared_home: bool, sessions: int
-) -> str:
-    """Which rule applied, where the trip's buckets fell relative to the home cities, and how many
-    sessions it joined, e.g. "shared home: out of town, 3 sessions"."""
+def _reason(trip: Sequence[BucketKey], homes: Homes, *, sessions: int) -> str:
+    """Which rule applied, where the trip's buckets fell relative to the home cities of their hour,
+    and how many sessions it joined, e.g. "shared home: out of town, 3 sessions". The rule is the
+    one at the trip's start; "then" marks a trip measured against a past home."""
     seen = set()
     for k in trip:
-        c = cell_center(k)
-        seen.add((city_a.covers(c), city_b.covers(c)))
-    if shared_home:
+        c, at = cell_center(k), homes.at(_when(k))
+        seen.add((at.city_a.covers(c), at.city_b.covers(c)))
+    first = homes.at(_when(trip[0]))
+    if first.shared_home:
         places = [("out of town", {(False, False)}), ("in town", {(True, False), (False, True), (True, True)})]
     else:
         places = [
@@ -174,7 +260,7 @@ def _reason(
             ("in town", {(True, True)}),
         ]
     where = " + ".join(label for label, bits in places if seen & bits)
-    rule = "shared home" if shared_home else "different homes"
+    rule = ("shared home" if first.shared_home else "different homes") + (" then" if first.past else "")
     return f"{rule}: {where}, {sessions} {'session' if sessions == 1 else 'sessions'}"
 
 
@@ -190,43 +276,53 @@ def assemble(
     city_km: float = CITY_KM,
     max_silence_hours: int = MAX_SILENCE_HOURS,
     min_photos: int = MIN_PHOTOS,
+    eras_a: Sequence[Era] | None = None,
+    eras_b: Sequence[Era] | None = None,
 ) -> list[TripWindow]:
     """Matched keys -> trips: the away buckets, sessionized, joined across nights until someone is
     back in their home city, then widened, backfilled and kept at >= min_photos across both devices.
+
+    With home histories (`eras_a`, `eras_b` from `anchors.home_eras`), each bucket is judged against
+    the homes of its hour. A bucket that was home then and is away now becomes part of an old-home
+    day (kind OLD_HOME): sessionized the same way, never joined across nights, dropped if its window
+    would overlap any trip's, then backfilled and kept at >= min_photos like a trip. Without them,
+    or with a single era each, there are no old-home days. Sorted by start.
 
     Raises ValueError when the two anchors files set shared_home differently, or when
     2 * reach_hours > gap_hours: two windows could then overlap and a photo land in two trips.
     """
     if 2 * reach_hours > gap_hours:
         raise ValueError(f"reach_hours ({reach_hours}) must be at most half of gap_hours ({gap_hours})")
-    shared_home = resolve_shared_home(anchors_a, anchors_b)
-    buf_a, buf_b = (commute_buffer(x.home, x.work) for x in (anchors_a, anchors_b))
-    city_a, city_b = (commute_buffer(x.home, x.work, city_km) for x in (anchors_a, anchors_b))
+    homes = Homes.of(anchors_a, anchors_b, eras_a=eras_a, eras_b=eras_b, city_km=city_km)
+    away: list[BucketKey] = []
+    old: list[BucketKey] = []
+    for k in matched:
+        c = cell_center(k)
+        if homes.at(_when(k)).away(c):
+            away.append(k)
+        elif homes.now.away(c):
+            old.append(k)
 
-    away = [k for k in matched if is_away(cell_center(k), buf_a, buf_b, shared_home=shared_home)]
-    sessions = sessionize(away, gap_hours=gap_hours)
     joined = join_nights(
-        sessions, city_a, city_b, shared_home=shared_home, ps_a=ps_a, ps_b=ps_b, max_silence_hours=max_silence_hours
+        sessionize(away, gap_hours=gap_hours), homes, ps_a=ps_a, ps_b=ps_b, max_silence_hours=max_silence_hours
     )
+    spans = [window(trip, reach_hours=reach_hours) for trip in joined]
+    candidates = []
+    for trip, (start, end) in zip(joined, spans):
+        out = [k for k in trip if homes.at(_when(k)).out_of_town(cell_center(k))]
+        reason = _reason(trip, homes, sessions=len(sessionize(trip, gap_hours=gap_hours)))
+        candidates.append(TripWindow(start, end, len(trip), 0, 0, _representative(out or trip), reason))
+    for day in sessionize(old, gap_hours=gap_hours):
+        start, end = window(day, reach_hours=reach_hours)
+        if any(start < e and s < end for s, e in spans):
+            continue
+        then = homes.at(_when(day[0]))
+        reason = f"old home: {'shared home' if then.shared_home else 'different homes'} then"
+        candidates.append(TripWindow(start, end, len(day), 0, 0, _representative(day), reason, OLD_HOME))
+
     kept = []
-    for trip in joined:
-        start, end = window(trip, reach_hours=reach_hours)
-        out = [k for k in trip if is_away(cell_center(k), city_a, city_b, shared_home=shared_home)]
-        w = backfill(
-            TripWindow(
-                start_utc=start,
-                end_utc=end,
-                matched_bucket_count=len(trip),
-                photo_count_a=0,
-                photo_count_b=0,
-                representative_geohash6=_representative(out or trip),
-                away_reason=_reason(
-                    trip, city_a, city_b, shared_home=shared_home, sessions=len(sessionize(trip, gap_hours=gap_hours))
-                ),
-            ),
-            ps_a,
-            ps_b,
-        )
+    for w in candidates:
+        w = backfill(w, ps_a, ps_b)
         if w.photo_count_a + w.photo_count_b >= min_photos:
             kept.append(w)
-    return kept
+    return sorted(kept, key=lambda w: w.start_utc)

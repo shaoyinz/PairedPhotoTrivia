@@ -14,7 +14,8 @@ and a remote partner may have no Mac. See `docs/IMPLEMENTATION_PLAN.md`.
 
 - No face recognition. "Together" = overlapping time + location across both libraries.
 - Matching: geohash-6 (~1 km) × 1-hour buckets, salted hashes (e.g. HMAC-SHA256), set intersection that includes neighbor cells.
-- Home = most frequent nighttime location; work = most frequent weekday daytime location (last 90 days). User can confirm or edit.
+- Home = most frequent nighttime location; work = most frequent weekday daytime location (last 90 days). User confirms or edits the current home only (search by zip, city or address, then drag a pin), never past homes.
+- Past homes are inferred from evening and night photos across the whole library; each photo is judged against the home its partner had then. Everyday moments at a home you have since left are old-home days: quiz material (a minority of rounds), never excluded, never scored in the precision gate.
 - 5 km buffer around each partner's home–work commute (start with a buffer around the straight home→work segment).
   - Different homes: a spot outside either partner's buffer counts (visits count).
   - Shared home: a spot must be outside both buffers.
