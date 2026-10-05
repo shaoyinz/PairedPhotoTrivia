@@ -164,7 +164,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 57YB588JY5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Metadata Export";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Reads each photo's date, time zone and location to write a metadata CSV. Images are never read.";
@@ -190,7 +190,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 57YB588JY5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Metadata Export";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Reads each photo's date, time zone and location to write a metadata CSV. Images are never read.";
