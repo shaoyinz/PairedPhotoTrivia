@@ -16,7 +16,15 @@ from photoquiz.buckets import GEOHASH_PRECISION, matched_keys, own_keys, salted_
 from photoquiz.filters import FilterStats
 from photoquiz.matching import match
 from photoquiz.models import TRIP, Anchors, BucketKey, Era, PhotoMeta, TripWindow
-from photoquiz.trips import CITY_KM, GAP_HOURS, MAX_SILENCE_HOURS, MIN_PHOTOS, REACH_HOURS, assemble
+from photoquiz.trips import (
+    CITY_KM,
+    GAP_HOURS,
+    MAX_SILENCE_HOURS,
+    MIN_PHOTOS,
+    REACH_HOURS,
+    TAIL_GAP_HOURS,
+    assemble,
+)
 
 PRECISION_GATE = 0.9  # phase-1 gate
 TIER2_COVERAGE = 0.6  # GPS coverage of travel photos below this pulls tier 2 into P0
@@ -106,16 +114,33 @@ class Evaluation:
     merges: int  # detected trips that overlap 2+ labels (1 detected : n labeled)
     labeled: int
     overlaps: tuple[tuple[int, int], ...] = ()  # (trip index, label index); names them on the terminal
+    tail_hours_in: int = 0  # hours the trips' tails (§1.7) carry them inside a label
+    tail_hours_out: int = 0  # hours they carry them outside every label: a tail run past the trip
 
 
-def evaluate(trips: Sequence[TripWindow], labels: Sequence[Label]) -> Evaluation:
+def evaluate(trips: Sequence[TripWindow], labels: Sequence[Label], *, reach_hours: int = REACH_HOURS) -> Evaluation:
     """A detected trip is a true positive if it overlaps a labeled trip in time.
 
     Both intervals are half-open: the trip's window, and the label's UTC days. Precision counts
     detected trips and recall counts labels, so a label found as three trips is one label found
     and three true positives. Neither number sees a split or a merge, hence the two counts.
+
+    Nor does either see how far a tail runs, since the matched part already overlaps the label.
+    So every hour a tail carries a trip is counted too, as inside a label or outside every one:
+    the hours from the matched part to the farthest photo the tail reached. The reach beyond that
+    photo is left out, since it crosses a label's UTC midnight on any evening west of UTC.
+    trips.json does not record the reach, so this takes the default unless told otherwise.
     """
     spans = [label_span(lb) for lb in labels]
+    pad = reach_hours * 3600
+    tail = [
+        any(lo <= t < hi for lo, hi in spans)
+        for w in trips
+        for t in (
+            *range(w.start_utc + pad, w.start_utc + pad + w.tail_hours_before * 3600, 3600),
+            *range(w.end_utc - pad - w.tail_hours_after * 3600, w.end_utc - pad, 3600),
+        )
+    ]
     overlaps = tuple(
         (i, j) for i, w in enumerate(trips) for j, (lo, hi) in enumerate(spans) if w.start_utc < hi and lo < w.end_utc
     )
@@ -131,6 +156,8 @@ def evaluate(trips: Sequence[TripWindow], labels: Sequence[Label]) -> Evaluation
         merges=sum(n > 1 for n in per_trip.values()),
         labeled=len(labels),
         overlaps=overlaps,
+        tail_hours_in=sum(tail),
+        tail_hours_out=len(tail) - sum(tail),
     )
 
 
@@ -146,6 +173,7 @@ class Params:
     min_photos: int = MIN_PHOTOS
     city_km: float = CITY_KM
     max_silence_hours: int = MAX_SILENCE_HOURS
+    tail_gap_hours: int = TAIL_GAP_HOURS
     past_homes: bool = True  # judge each bucket against the homes of its hour (§1.5); False = anchors only
 
 
@@ -156,6 +184,7 @@ SWEEP: dict[str, tuple[int | float, ...]] = {
     "min_photos": (3, 5, 8),
     "city_km": (15.0, 25.0, 50.0),
     "max_silence_hours": (24, 72, 168),
+    "tail_gap_hours": (0, 12, 24, 48, 72),  # 0 = no tails
 }
 
 # Pairs that interact, so they are also swept over their full product. Each of these two can end
@@ -176,7 +205,7 @@ def grid(
     joint: Sequence[tuple[str, str]] = JOINT,
 ) -> list[Params]:
     """The defaults first, then each axis varied alone around them, then each joint pair over the
-    product of its two axes. No point appears twice: 15 runs rather than the full product's 243."""
+    product of its two axes. No point appears twice: 19 runs rather than the full product's 1,215."""
     points = [replace(base, **{name: v}) for name, values in axes.items() for v in values]
     points += [replace(base, **{x: vx, y: vy}) for x, y in joint for vx in axes[x] for vy in axes[y]]
     return list(dict.fromkeys([base, *points]))
@@ -217,6 +246,7 @@ def sweep(
             gap_hours=p.gap_hours,
             city_km=p.city_km,
             max_silence_hours=p.max_silence_hours,
+            tail_gap_hours=p.tail_gap_hours,
             min_photos=p.min_photos,
             eras_a=eras_a if p.past_homes else None,
             eras_b=eras_b if p.past_homes else None,
@@ -332,6 +362,8 @@ def render(
             ("Missed labels", str(ev.false_negatives)),
             ("Splits (n detected : 1 labeled)", str(ev.splits)),
             ("Merges (1 detected : n labeled)", str(ev.merges)),
+            ("Tail hours inside a label", str(ev.tail_hours_in)),
+            ("Tail hours outside every label", str(ev.tail_hours_out)),
             ("Old-home days (not scored)", str(old_home)),
         ],
     )
@@ -378,7 +410,7 @@ def render(
         "",
     ]
     out += _table(
-        ("Run", "Trips", "Precision", "Recall", "FP", "Missed", "Splits", "Merges"),
+        ("Run", "Trips", "Precision", "Recall", "FP", "Missed", "Splits", "Merges", "Tail h in / out"),
         [
             (
                 varied(r.params, base),
@@ -386,6 +418,7 @@ def render(
                 _pct(r.ev.true_positives, r.trips),
                 _pct(r.ev.labeled - r.ev.false_negatives, r.ev.labeled),
                 *(str(n) for n in (r.ev.false_positives, r.ev.false_negatives, r.ev.splits, r.ev.merges)),
+                f"{r.ev.tail_hours_in} / {r.ev.tail_hours_out}",
             )
             for r in sweep
         ],
@@ -394,6 +427,9 @@ def render(
         f"Best run (past the {PRECISION_GATE:.0%} precision gate: recall, then fewest merges, fewest splits, "
         f"precision; short of it, precision first): "
         f"**{varied(best(sweep).params, base)}**.",
+        "",
+        "Tail hours do not rank runs, since shorter tails cut hours inside labels along with those outside. "
+        "Choose tail_gap_hours from the last column.",
         "",
     ]
     return "\n".join(out)

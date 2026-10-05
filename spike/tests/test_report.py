@@ -4,7 +4,7 @@ import datetime as dt
 import json
 import os
 import re
-from dataclasses import fields
+from dataclasses import fields, replace
 
 import pytest
 from typer.testing import CliRunner
@@ -156,6 +156,16 @@ def test_nothing_detected_or_nothing_labeled_scores_zero():
     assert evaluate([trip(JUL_10, JUL_10 + 1)], []) == Evaluation(0.0, 0.0, 0, 1, 0, 0, 0, 0)
 
 
+def test_tail_hours_count_where_a_tail_carried_the_trip_but_not_the_reach():
+    """A tail of 1 h before and 5 h after, the last 2 h of it past the label's last day. The 3 h
+    reach beyond the tail's farthest photo is not the tail's doing, so it is not counted."""
+    w = replace(trip(JUL_10, JUL_10 + 3 * DAY + 5 * 3600), tail_hours_before=1, tail_hours_after=5)
+    ev = evaluate([w], [TAHOE])
+    assert (ev.tail_hours_in, ev.tail_hours_out, ev.precision) == (1 + 3, 2, 1.0)
+    ev = evaluate([w], [TAHOE], reach_hours=0)  # read as a window with no reach
+    assert (ev.tail_hours_in, ev.tail_hours_out) == (1, 5)
+
+
 # sweep
 
 
@@ -166,9 +176,9 @@ def changed(p: Params) -> set[str]:
 def test_grid_varies_one_parameter_at_a_time_then_city_with_silence():
     points = grid()
     assert points[0] == Params()
-    assert len(points) == len(set(points)) == 15
-    assert [len(changed(p)) for p in points[1:]] == [1] * 10 + [2] * 4
-    assert all(changed(p) == {"city_km", "max_silence_hours"} for p in points[11:])
+    assert len(points) == len(set(points)) == 19
+    assert [len(changed(p)) for p in points[1:]] == [1] * 14 + [2] * 4
+    assert all(changed(p) == {"city_km", "max_silence_hours"} for p in points[15:])
 
 
 def test_grid_holds_every_city_and_silence_pair():
@@ -177,7 +187,7 @@ def test_grid_holds_every_city_and_silence_pair():
 
 
 def test_grid_without_joint_pairs_is_one_at_a_time():
-    assert len(grid(joint=())) == 11
+    assert len(grid(joint=())) == 15
 
 
 def test_grid_covers_the_planned_values():
@@ -185,6 +195,7 @@ def test_grid_covers_the_planned_values():
     assert {p.geohash_precision for p in points} == {5, 6, 7}
     assert {p.city_km for p in points} == {15.0, 25.0, 50.0}
     assert {p.max_silence_hours for p in points} == {24, 72, 168}
+    assert {p.tail_gap_hours for p in points} == {0, 12, 24, 48, 72}
 
 
 def test_varied_names_what_changed():
@@ -235,18 +246,26 @@ def run(fixture, points):
 
 def test_synthetic_sweep(fixture):
     rows = {varied(r.params, Params()): r for r in run(fixture, grid())}
-    assert len(rows) == 15 and "city_km=15, max_silence_hours=168" in rows
+    assert len(rows) == 19 and "city_km=15, max_silence_hours=168" in rows
     for name, r in rows.items():
         if name == "min_photos=3":  # the 2 + 2 near-trip gets in
-            assert (r.trips, r.ev.false_positives, r.ev.precision, r.ev.recall) == (5, 1, 0.8, 1.0)
+            assert (r.trips, r.ev.false_positives, r.ev.precision, r.ev.recall) == (7, 1, 6 / 7, 1.0)
         else:
-            assert (r.trips, r.ev.precision, r.ev.recall, r.ev.splits, r.ev.merges) == (4, 1.0, 1.0, 0, 0), name
+            assert (r.trips, r.ev.precision, r.ev.recall, r.ev.splits, r.ev.merges) == (6, 1.0, 1.0, 0, 0), name
+        assert r.ev.tail_hours_out == 0, name
+
+
+def test_synthetic_tails_stay_inside_the_labels(fixture):
+    """Yosemite's second day is carried in by A's photos alone; at 12 h the night stops it, at 0 nothing moves."""
+    rows = {r.params.tail_gap_hours: r.ev for r in run(fixture, [Params(tail_gap_hours=h) for h in (0, 12, 24)])}
+    assert rows[0].tail_hours_in == 0 < rows[12].tail_hours_in < rows[24].tail_hours_in
+    assert all(ev.tail_hours_out == 0 and ev.recall == 1.0 for ev in rows.values())
 
 
 def test_synthetic_merge_moves_with_the_home_city_radius(fixture):
     """With only the 5 km buffers as home, A's dinner in Oakland no longer splits Napa from Santa Cruz (§1.7)."""
     [r] = run(fixture, [Params(city_km=5.0)])
-    assert (r.trips, r.ev.merges, r.ev.precision, r.ev.recall) == (3, 1, 1.0, 1.0)
+    assert (r.trips, r.ev.merges, r.ev.precision, r.ev.recall) == (5, 1, 1.0, 1.0)
 
 
 def test_synthetic_silence_cap_splits_tahoe_by_night(fixture):
@@ -269,8 +288,8 @@ def test_sweep_leaves_old_home_days_out_of_the_score(fixture):
     }
     points = [Params(), Params(past_homes=False)]
     with_past, without = sweep(points, labels, an_a, an_b, ps_a=a, ps_b=b, salt=SALT, **eras)
-    assert (with_past.trips, with_past.ev.precision, with_past.ev.false_negatives) == (3, 1.0, 1)
-    assert (without.trips, without.ev.precision, without.ev.recall) == (4, 1.0, 1.0)
+    assert (with_past.trips, with_past.ev.precision, with_past.ev.false_negatives) == (5, 1.0, 1)
+    assert (without.trips, without.ev.precision, without.ev.recall) == (6, 1.0, 1.0)
 
 
 # report
@@ -299,6 +318,7 @@ def test_report_holds_the_gate_and_the_counts():
     assert "| 2026 | 50.0% (1 / 2) | 100.0% (1 / 1) |" in md
     assert "Not run, or older" in md and "unavailable" not in md
     assert "| Old-home days (not scored) | 0 |" in md
+    assert "| Tail hours inside a label | 0 |" in md and "| Tail hours outside every label | 0 |" in md
     assert "| Old-home days (not scored) | 3 |" in reported(old_home=3)
 
 
@@ -352,13 +372,15 @@ def pipeline(tmp_path):
 def test_cli_sweep_then_report(pipeline):
     run, d = CliRunner().invoke, ["--data", str(pipeline)]
     out = run(app, ["sweep", *d])
-    assert out.exit_code == 0 and "sweep: 15 runs, best defaults" in out.output
-    assert len(json.loads((pipeline / "sweep.json").read_text())) == 15
+    assert out.exit_code == 0 and "sweep: 19 runs, best defaults" in out.output
+    assert len(json.loads((pipeline / "sweep.json").read_text())) == 19
     out = run(app, ["report", "--min-precision", "1.0", "--min-recall", "1.0", *d])
     assert out.exit_code == 0, out.output
-    assert "precision=1.00 recall=1.00 tp=4 fp=0 fn=0 splits=0 merges=0 sweep=yes" in out.output
+    assert "precision=1.00 recall=1.00 tp=6 fp=0 fn=0 splits=0 merges=0 sweep=yes" in out.output
     md = (pipeline / "spike_report.md").read_text()
-    assert "| min_photos=3 | 5 | 80.0% | 100.0% | 1 | 0 | 0 | 0 |" in md
+    assert "| min_photos=3 | 7 | 85.7% | 100.0% | 1 | 0 | 0 | 0 |" in md
+    assert "| tail_gap_hours=0 | 6 | 100.0% | 100.0% | 0 | 0 | 0 | 0 | 0 / 0 |" in md
+    assert "| Tail hours outside every label | 0 |" in md
     assert "Not run, or older" not in md
 
 
@@ -391,7 +413,7 @@ def test_cli_report_leaves_old_home_days_out_of_the_score(pipeline):
     day = {**ws[0], "start_utc": 0, "end_utc": 3600, "away_reason": "old home: shared home then", "kind": OLD_HOME}
     path.write_text(json.dumps([*ws, day]))
     out = CliRunner().invoke(app, ["report", "--min-precision", "1.0", "--data", str(pipeline)])
-    assert out.exit_code == 0 and "precision=1.00 recall=1.00 tp=4 fp=0" in out.output
+    assert out.exit_code == 0 and "precision=1.00 recall=1.00 tp=6 fp=0" in out.output
     assert "old-home days: 1, not scored" in out.output and "no label:" not in out.output
     assert "| Old-home days (not scored) | 1 |" in (pipeline / "spike_report.md").read_text()
 
@@ -400,8 +422,8 @@ def test_cli_report_names_a_detection_no_label_covers(pipeline):
     labels = pipeline / "labels.csv"
     labels.write_text("\n".join(line for line in labels.read_text().splitlines() if not line.startswith("monterey")))
     out = CliRunner().invoke(app, ["report", "--min-precision", "0.9", "--data", str(pipeline)])
-    assert out.exit_code == 1 and "precision=0.75" in out.output
-    assert "no label: 2026-06-13 17:00Z..2026-06-14 00:00Z 9q923f" in out.output
+    assert out.exit_code == 1 and "precision=0.83" in out.output
+    assert "no label: 2026-06-13 15:00Z..2026-06-14 01:00Z 9q923f" in out.output
 
 
 @pytest.mark.parametrize(
@@ -431,4 +453,4 @@ def test_sweep_rows_round_trip_through_json(pipeline):
     rows = _read_sweep(pipeline / "sweep.json")
     _write_sweep(rows, pipeline / "again.json")
     assert _read_sweep(pipeline / "again.json") == rows
-    assert rows[0].ev.overlaps == ((0, 2), (1, 3), (2, 1), (3, 0))  # tuples again, not JSON lists
+    assert rows[0].ev.overlaps == ((0, 4), (1, 5), (2, 2), (3, 3), (4, 1), (5, 0))  # tuples again, not JSON lists

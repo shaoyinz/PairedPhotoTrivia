@@ -1,38 +1,45 @@
 """Matched buckets -> trips and old-home days (§1.7).
 
-Device-local, like `buckets.py`. Four steps:
+Device-local, like `buckets.py`. Five steps:
 
 1. Keep the matched buckets that are away (§1.6), each tested at its geohash-6 cell center
    against the homes the two of you had at that hour (§1.5's home history).
 2. Sessionize them: a gap of more than GAP_HOURS starts a new session.
 3. Join out-of-town sessions across the nights between them. A trip ends when either partner is
    seen back in their home city (CITY_KM around home->work), not when the photos pause.
-4. Widen each trip by REACH_HOURS, backfill both partners' photos, keep it at >= MIN_PHOTOS.
+4. Carry each out-of-town end of a trip out along photos only one partner took (its tails), until
+   either partner is seen back in their home city or that partner's photos pause for longer than
+   TAIL_GAP_HOURS.
+5. Widen each trip by REACH_HOURS, backfill both partners' photos, keep it at >= MIN_PHOTOS.
 
 A bucket that was home then but is away now, at a home one of you has since left, goes into an
 old-home day instead: sessionized the same way, never joined across nights, and dropped where
 it would overlap a trip.
 
-Every test reduces to per-partner bits: is this bucket in my buffer then and now, in my home
-city; in this gap, was I seen back in my city, did I keep taking located photos. So in phase 2
-each phone can answer for itself, and neither needs the other's home, work or photos.
+Every test reduces to per-partner answers: is this bucket in my buffer then and now, in my home
+city; in this gap, was I seen back in my city, did I keep taking located photos; past this trip's
+end, in which hour was I first back in my city, and how far do my own photos out of it carry the
+trip. So in phase 2 each phone can answer for itself, and neither needs the other's home, work or
+photos.
 """
 
 from __future__ import annotations
 
-from bisect import bisect_right
-from collections.abc import Sequence
+import math
+from bisect import bisect_left, bisect_right
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
 
 import pygeohash as pgh
 
 from photoquiz.commute import CommuteBuffer, commute_buffer, is_away, is_shared_home, resolve_shared_home
-from photoquiz.models import OLD_HOME, Anchors, BucketKey, Era, LatLon, PhotoMeta, TripWindow
+from photoquiz.models import OLD_HOME, TRIP, Anchors, BucketKey, Era, LatLon, PhotoMeta, TripWindow
 
 GAP_HOURS = 6  # away buckets further apart than this start a new session
 REACH_HOURS = 3  # backfill reaches this far past a trip's first and last bucket; at most GAP_HOURS / 2
 CITY_KM = 25.0  # home city: within this of the home->work segment
 MAX_SILENCE_HOURS = 72  # a trip ends once each partner has gone this long without a located photo
+TAIL_GAP_HOURS = 24  # a tail goes on while one partner's next photo out of their own city is this close; 0 = off
 MIN_PHOTOS = 5
 
 
@@ -205,6 +212,115 @@ def join_nights(
     return trips
 
 
+Located = tuple[list[PhotoMeta], list[int]]  # one partner's GPS photos in time order, and their times
+
+
+def _located(ps: Sequence[PhotoMeta]) -> Located:
+    ls = sorted((p for p in ps if p.has_gps and p.utc_epoch is not None), key=lambda p: p.utc_epoch)
+    return ls, [p.utc_epoch for p in ls]
+
+
+def _walk(located: Located, seed_t: int, sign: int) -> Iterator[PhotoMeta]:
+    """One partner's GPS photos walking out from seed_t: on from it (sign +1), or back from just
+    before it (sign -1)."""
+    ps, ts = located
+    i = bisect_left(ts, seed_t)
+    return iter(ps[i:]) if sign > 0 else reversed(ps[:i])
+
+
+def _hour(p: PhotoMeta) -> int:
+    return p.utc_epoch // 3600
+
+
+def _first_back(walk: Iterator[PhotoMeta], city: CommuteBuffer, trip: Sequence[LatLon]) -> int | None:
+    """The hour of the walk's first photo inside this partner's own home city: back home. None when
+    there is none, or when the trip itself is in that city: B visiting A is not ended by A at home."""
+    if any(city.covers(q) for q in trip):
+        return None
+    return next((_hour(p) for p in walk if city.covers(LatLon(p.lat, p.lon))), None)
+
+
+def _carry(
+    walk: Iterator[PhotoMeta], city: CommuteBuffer, seed_t: int, sign: int, gap_s: int, before: float
+) -> int | None:
+    """The farthest hour one partner's own photos carry a trip's end: photos outside their home
+    city, each within gap_s of the one before (the first within gap_s of seed_t), in hours h with
+    sign * h < before. None when not even the first qualifies."""
+    prev, last = seed_t, None
+    for p in walk:
+        if sign * _hour(p) >= before or sign * (p.utc_epoch - prev) > gap_s:
+            break
+        if not city.covers(LatLon(p.lat, p.lon)):
+            prev, last = p.utc_epoch, _hour(p)
+    return last
+
+
+def _tail(
+    end: int,
+    sign: int,
+    spots: Sequence[LatLon],
+    homes: Homes,
+    located: tuple[Located, Located],
+    tail_gap_hours: int,
+    limit: float,
+) -> int:
+    """The hour that a trip's last (sign +1) or first (sign -1) matched hour `end` reaches.
+
+    Each partner walks out alone and first says in which hour they were back in their own home city.
+    The nearer of those two, or `limit`, is the cutoff: no tail goes into or past that hour. Then
+    each carries the end as far as their own run of photos out of their city goes, and the farther
+    of the two counts. Judged with the home cities in force at the matched hour's edge.
+    """
+    seed_t = (end + 1) * 3600 if sign > 0 else end * 3600
+    then = homes.at(seed_t)
+    sides = ((then.city_a, located[0]), (then.city_b, located[1]))
+    backs = [_first_back(_walk(loc, seed_t, sign), city, spots) for city, loc in sides]
+    before = min([limit, *(sign * h for h in backs if h is not None)])
+    gap_s = tail_gap_hours * 3600
+    reached = [_carry(_walk(loc, seed_t, sign), city, seed_t, sign, gap_s, before) for city, loc in sides]
+    return sign * max([sign * end, *(sign * h for h in reached if h is not None)])
+
+
+def tails(
+    trips: Sequence[Sequence[BucketKey]],
+    homes: Homes,
+    *,
+    ps_a: Sequence[PhotoMeta],
+    ps_b: Sequence[PhotoMeta],
+    gap_hours: int = GAP_HOURS,
+    reach_hours: int = REACH_HOURS,
+    tail_gap_hours: int = TAIL_GAP_HOURS,
+) -> list[tuple[int, int]]:
+    """Each trip's tails in hours, (before its first matched hour, after its last), in trip order.
+
+    Only an end whose session has a bucket out of town gets one; in town you sleep at home, as in
+    join_nights. A tail follows one partner's GPS photos outside their own home city (a host at
+    home is no tail), each within tail_gap_hours of the one before, and stops before the first hour
+    either partner is seen back in their home city. GPS-less photos neither carry nor stop it.
+    Neighbouring windows never overlap: a tail stops 2 * reach_hours short of the next trip's first
+    matched hour, and a head as far after the previous trip's tail. tail_gap_hours = 0 turns tails off.
+    """
+    if tail_gap_hours <= 0:
+        return [(0, 0)] * len(trips)
+    located = _located(ps_a), _located(ps_b)
+    ends: list[tuple[int, int]] = []
+    out: list[tuple[int, int]] = []
+    for i, trip in enumerate(trips):
+        first, last = min(k.hour_index for k in trip), max(k.hour_index for k in trip)
+        parts = sessionize(trip, gap_hours=gap_hours)
+        spots = _out_of_town(trip, homes)
+        start, end = first, last
+        if _out_of_town(parts[0], homes):
+            limit = -(ends[-1][1] + 2 * reach_hours) if ends else math.inf
+            start = _tail(first, -1, spots, homes, located, tail_gap_hours, limit)
+        if _out_of_town(parts[-1], homes):
+            nxt = min(k.hour_index for k in trips[i + 1]) - 2 * reach_hours if i + 1 < len(trips) else math.inf
+            end = _tail(last, 1, spots, homes, located, tail_gap_hours, nxt)
+        ends.append((start, end))
+        out.append((first - start, end - last))
+    return out
+
+
 def window(trip: Sequence[BucketKey], *, reach_hours: int = REACH_HOURS) -> tuple[int, int]:
     """[start_utc, end_utc): the trip's first to last hour, widened by reach_hours on each side.
 
@@ -275,12 +391,14 @@ def assemble(
     reach_hours: int = REACH_HOURS,
     city_km: float = CITY_KM,
     max_silence_hours: int = MAX_SILENCE_HOURS,
+    tail_gap_hours: int = TAIL_GAP_HOURS,
     min_photos: int = MIN_PHOTOS,
     eras_a: Sequence[Era] | None = None,
     eras_b: Sequence[Era] | None = None,
 ) -> list[TripWindow]:
     """Matched keys -> trips: the away buckets, sessionized, joined across nights until someone is
-    back in their home city, then widened, backfilled and kept at >= min_photos across both devices.
+    back in their home city, carried out along photos only one partner took (`tails`), then
+    widened, backfilled and kept at >= min_photos across both devices.
 
     With home histories (`eras_a`, `eras_b` from `anchors.home_eras`), each bucket is judged against
     the homes of its hour. A bucket that was home then and is away now becomes part of an old-home
@@ -306,12 +424,19 @@ def assemble(
     joined = join_nights(
         sessionize(away, gap_hours=gap_hours), homes, ps_a=ps_a, ps_b=ps_b, max_silence_hours=max_silence_hours
     )
-    spans = [window(trip, reach_hours=reach_hours) for trip in joined]
+    carried = tails(
+        joined, homes, ps_a=ps_a, ps_b=ps_b, gap_hours=gap_hours, reach_hours=reach_hours, tail_gap_hours=tail_gap_hours
+    )
+    spans = []
     candidates = []
-    for trip, (start, end) in zip(joined, spans):
+    for trip, (before, after) in zip(joined, carried):
+        start, end = window(trip, reach_hours=reach_hours)
+        start, end = start - before * 3600, end + after * 3600
+        spans.append((start, end))
         out = [k for k in trip if homes.at(_when(k)).out_of_town(cell_center(k))]
         reason = _reason(trip, homes, sessions=len(sessionize(trip, gap_hours=gap_hours)))
-        candidates.append(TripWindow(start, end, len(trip), 0, 0, _representative(out or trip), reason))
+        rep = _representative(out or trip)
+        candidates.append(TripWindow(start, end, len(trip), 0, 0, rep, reason, TRIP, before, after))
     for day in sessionize(old, gap_hours=gap_hours):
         start, end = window(day, reach_hours=reach_hours)
         if any(start < e and s < end for s, e in spans):

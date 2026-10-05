@@ -36,7 +36,7 @@ off without scrolling past the other eight. This document keeps the framing and 
 | [1.4 Buckets and matching](plan/1.4-buckets-and-matching.md) | geohash6 × hour, salted hashes, one-sided expansion |
 | [1.5 Anchors](plan/1.5-anchors.md) | Home and work inference from local hours; past homes, inferred |
 | [1.6 Away rule](plan/1.6-away-rule.md) | Commute buffer and what counts as away |
-| [1.7 Trip assembly](plan/1.7-trip-assembly.md) | Away sessions joined across nights until back in the home city, ≥ 5 photos, backfill; old-home days |
+| [1.7 Trip assembly](plan/1.7-trip-assembly.md) | Away sessions joined across nights until back in the home city, tails along one partner's photos, ≥ 5 photos, backfill; old-home days |
 | [1.8 Labels and evaluation](plan/1.8-evaluation.md) | Precision, recall, split/merge, GPS coverage, sweep |
 | [1.9 Tests](plan/1.9-tests.md) | Unit tests and the vectors the Swift port reuses |
 
@@ -133,6 +133,7 @@ the report.
 | --- | --- | --- |
 | Low GPS coverage | Phase 1 coverage report | Pull tier 2 (Vision feature prints) into P0 |
 | Trips merge or split badly | Split/merge counts at the gate | Tune the home-city radius and silence cap ([§1.7](plan/1.7-trip-assembly.md)); DBSCAN on space × time only if that fails |
+| Tails run past the trip (one partner home, no photo there) | Tail hours outside labels ([§1.8](plan/1.8-evaluation.md)) | Shorter tail gap; in phase 2, confirm the tail alone through tier 3 |
 | CKShare friction or quotas | Phase 2 two-phone test | Minimal backend (e.g. Supabase) holding only hashes |
 | App Review on photo access | Submission | On-device processing, explained in the purpose string |
 | Anchor inference wrong | Phase 1 anchors output; a move inside the 90-day window; few night photos | Confirm/edit UI is already P0; keep it prominent |

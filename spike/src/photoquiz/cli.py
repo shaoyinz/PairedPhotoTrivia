@@ -379,6 +379,9 @@ def trips_cmd(
     max_silence_hours: Annotated[
         int, typer.Option(help="A trip ends once each partner goes this long without a located photo.")
     ] = trips.MAX_SILENCE_HOURS,
+    tail_gap_hours: Annotated[
+        int, typer.Option(help="A tail goes on while one partner's photos out of town are this close; 0 = off.")
+    ] = trips.TAIL_GAP_HOURS,
     min_photos: int = trips.MIN_PHOTOS,
     past_homes: Annotated[
         bool, typer.Option("--past-homes/--no-past-homes", help="Judge each hour against the homes you had then.")
@@ -386,7 +389,8 @@ def trips_cmd(
     data: DataDir = DEFAULT_DATA,
 ) -> None:
     """Map matched hashes back to A's own buckets, keep the away ones, join nights until someone is
-    back in their home city, apply the >= 5 rule -> trips.json. Days at a home one of you has since
+    back in their home city, carry the ends along photos only one partner took, apply the >= 5
+    rule -> trips.json. Days at a home one of you has since
     left go in too, as kind "old_home"."""
     anchors_a, anchors_b = _read_anchors(data / "anchors_a.toml"), _read_anchors(data / "anchors_b.toml")
     try:
@@ -425,6 +429,7 @@ def trips_cmd(
         reach_hours=reach_hours,
         city_km=city_km,
         max_silence_hours=max_silence_hours,
+        tail_gap_hours=tail_gap_hours,
         eras_a=eras_a,
         eras_b=eras_b,
     )
@@ -437,13 +442,16 @@ def trips_cmd(
     found = sum(w.kind == TRIP for w in ws)
     typer.echo(
         f"trips: matched_keys={len(matched_keys)} away={len(away)} trips={found} old_home={len(ws) - found} "
-        f"(gap > {gap_hours} h, reach {reach_hours} h, silence <= {max_silence_hours} h, >= {min_photos} photos)"
+        f"(gap > {gap_hours} h, reach {reach_hours} h, silence <= {max_silence_hours} h, "
+        f"tail gap <= {tail_gap_hours} h, >= {min_photos} photos)"
     )
     for w in away:
+        carried = w.tail_hours_before or w.tail_hours_after
         typer.echo(
             f"  {'' if w in ws else f'under {min_photos} photos: '}"
             f"{_fmt_utc(w.start_utc)}..{_fmt_utc(w.end_utc)} {w.representative_geohash6} "
             f"a={w.photo_count_a} b={w.photo_count_b} ({w.away_reason})"
+            + (f" tails {w.tail_hours_before} h before, {w.tail_hours_after} h after" if carried else "")
         )
 
 
@@ -487,7 +495,7 @@ def report_cmd(
 @app.command("sweep")
 def sweep_cmd(data: DataDir = DEFAULT_DATA) -> None:
     """Rerun buckets -> match -> trips one parameter at a time around the defaults (gap hours,
-    geohash precision, min photos, home-city radius, silence cap), then home-city radius and
+    geohash precision, min photos, home-city radius, silence cap, tail gap), then home-city radius and
     silence cap together, and once without past homes if either partner has one. Score each run
     against labels.csv -> sweep.json, which `report` renders."""
     labels = _labels_or_exit(data, "sweep")
@@ -507,7 +515,7 @@ def sweep_cmd(data: DataDir = DEFAULT_DATA) -> None:
             typer.echo(
                 f"  {report.varied(r.params, points[0])}: trips={r.trips} precision={r.ev.precision:.2f} "
                 f"recall={r.ev.recall:.2f} fp={r.ev.false_positives} fn={r.ev.false_negatives} "
-                f"splits={r.ev.splits} merges={r.ev.merges}"
+                f"splits={r.ev.splits} merges={r.ev.merges} tail_h={r.ev.tail_hours_in}/{r.ev.tail_hours_out}"
             )
     except ValueError as e:
         typer.echo(f"sweep: {e}", err=True)

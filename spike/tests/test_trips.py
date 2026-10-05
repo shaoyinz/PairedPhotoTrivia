@@ -26,6 +26,7 @@ from photoquiz.trips import (
     join_nights,
     photos_in,
     sessionize,
+    tails,
     window,
 )
 
@@ -180,6 +181,85 @@ def test_the_hosts_photos_at_home_do_not_end_a_visit():
     assert join([day_1, day_2], ps_a=[photo("a", NIGHT, at=HOME)], apart=True) == [day_1, day_2]
 
 
+# tails: photos only one partner took carry a trip's out-of-town ends
+
+TRIP_1 = [[key(TAHOE, H)]]  # its last matched hour is H, so a tail is timed from (H + 1) * 3600
+
+
+def carried(trips, ps_a=(), ps_b=(), *, apart=False, **kw):
+    return tails(trips, Homes.of(*(APART if apart else SHARED)), ps_a=ps_a, ps_b=ps_b, **kw)
+
+
+def at(person: str, *hours: int, where: LatLon | None = TAHOE) -> list[PhotoMeta]:
+    return [photo(f"{person}-{h}", (H + h) * 3600, at=where) for h in hours]
+
+
+def test_one_partners_photos_carry_the_trip_into_the_next_days():
+    assert carried(TRIP_1, at("a", 5, 20, 40)) == [(0, 40)]  # 4, 15 and 20 h apart
+    assert carried(TRIP_1, ps_b=at("b", 5, 20, 40)) == [(0, 40)]
+    assert carried(TRIP_1, at("a", -20, -5)) == [(20, 0)]  # before the first match too
+
+
+@pytest.mark.parametrize(("gap", "after"), [(24, 25), (23, 0), (48, 50)])
+def test_a_tail_stops_where_the_photos_pause_longer_than_tail_gap_hours(gap, after):
+    """24 h from the end of the matched hour to the first photo, then 25 h to the next."""
+    assert carried(TRIP_1, at("a", 25, 50), tail_gap_hours=gap) == [(0, after)]
+
+
+def test_each_partners_run_is_timed_alone():
+    """Together these two are never 24 h apart. Each alone pauses 40 h: A carries the trip to its first
+    photo, and B, whose first comes 29 h after the trip, not at all."""
+    assert carried(TRIP_1, at("a", 10, 50), at("b", 30, 70)) == [(0, 10)]
+
+
+@pytest.mark.parametrize("where", [HOME, WORK, IN_TOWN])
+@pytest.mark.parametrize("who", ["a", "b"])
+def test_either_partner_seen_back_in_the_home_city_ends_both_tails(who, where):
+    back = at(who, 10, where=where)
+    ps_a, ps_b = (at("a", 5, 20) + back, at("b", 25)) if who == "a" else (at("a", 5, 20), back + at("b", 25))
+    assert carried(TRIP_1, ps_a, ps_b) == [(0, 5)]
+
+
+def test_photos_without_gps_neither_carry_nor_stop_a_tail():
+    assert carried(TRIP_1, at("a", 5, 20, where=None)) == [(0, 0)]
+    assert carried(TRIP_1, at("a", 5, 20), at("b", 10, where=None)) == [(0, 20)]
+
+
+def test_a_host_at_home_neither_carries_nor_ends_a_visit():
+    """Different homes, A visiting B. B's photos at home are the visit; A's carry it; A back home ends it."""
+    visit = [[key(B_HOME, H)]]
+    assert carried(visit, ps_b=at("b", 5, 20, where=B_HOME), apart=True) == [(0, 0)]
+    assert carried(visit, at("a", 5, 20, where=B_HOME), at("b", 10, where=B_HOME), apart=True) == [(0, 20)]
+    assert carried(visit, at("a", 5, 20, where=B_HOME) + at("a", 10, where=HOME), apart=True) == [(0, 5)]
+
+
+def test_trips_in_town_have_no_tails():
+    assert carried([[key(IN_TOWN, H)]], at("a", 5, 20)) == [(0, 0)]
+
+
+def test_tail_gap_hours_zero_turns_tails_off():
+    assert carried(TRIP_1, at("a", 5, 20, 40), tail_gap_hours=0) == [(0, 0)]
+
+
+def test_neighbouring_tails_never_overlap():
+    """A carries the first trip to H+110, and B the second back to H+110. Each alone pauses over 72 h,
+    so join_nights keeps them apart. The second trip's head then stops 2 * reach after the first's tail."""
+    trips = [[key(TAHOE, H)], [key(TAHOE, H + 200)]]
+    ps_a, ps_b = at("a", 10, 30, 50, 70, 90, 110), at("b", 110, 130, 150, 170, 190)
+    assert join([trips[0], trips[1]], ps_a, ps_b) == trips
+    assert carried(trips, ps_a, ps_b) == [(0, 110), (70, 0)]
+    ws = assemble([k for t in trips for k in t], *SHARED, ps_a=ps_a, ps_b=ps_b, min_photos=0)
+    assert [(w.tail_hours_before, w.tail_hours_after) for w in ws] == [(0, 110), (70, 0)]
+    assert ws[0].end_utc <= ws[1].start_utc
+
+
+def test_a_tail_widens_the_window_and_backfill_counts_it():
+    [w] = assemble([key(TAHOE, H)], *SHARED, ps_a=at("a", 0, 20, 21) + at("a", 22, where=None), ps_b=at("b", 0))
+    assert (w.tail_hours_before, w.tail_hours_after) == (0, 21)
+    assert (w.start_utc, w.end_utc) == ((H - 3) * 3600, (H + 21 + 4) * 3600)
+    assert (w.photo_count_a, w.photo_count_b) == (4, 1)  # A's GPS-less photo is within the reach of the tail
+
+
 # window
 
 
@@ -309,11 +389,12 @@ def test_min_photos_across_both_devices(n_a, n_b, min_photos, kept):
 
 
 def test_backfill_reaches_what_one_partner_shot_alone():
-    """B's single GPS photo makes the match; A's unmatched photos and B's GPS-less ones make the trip."""
+    """B's single GPS photo makes the match; A's unmatched photos and B's GPS-less ones make the trip.
+    Tails off: A's photos at the window's edges would otherwise carry it out to the ones just past."""
     start, end = window([key(TAHOE, H)])  # H-3 .. H+4
     ps_a = [photo("a-first", start), photo("a-last", end - 1), photo("a-early", start - 1), photo("a-late", end)]
     ps_b = [photo("b-gps", H * 3600 + 600), photo("b-0", H * 3600 + 900, at=None), photo("b-1", H * 3600 + 960, at=None)]
-    [w] = assemble([key(TAHOE, H)], *SHARED, ps_a=ps_a, ps_b=ps_b)
+    [w] = assemble([key(TAHOE, H)], *SHARED, ps_a=ps_a, ps_b=ps_b, tail_gap_hours=0)
     assert (w.photo_count_a, w.photo_count_b) == (2, 3)
 
 
@@ -429,12 +510,14 @@ def test_synthetic_trips_are_the_planted_trips(fixture):
     a, b, an_a, an_b, keys = fixture
     ws = assemble(keys, an_a, an_b, ps_a=a, ps_b=b)
     assert [dates(w) for w in ws] == [
+        synth.YOSEMITE_DAYS,
+        (synth.MENDOCINO_DAY, synth.MENDOCINO_DAY),
         (synth.NAPA_DAY, synth.NAPA_DAY),
         (synth.SANTA_CRUZ_DAY, synth.SANTA_CRUZ_DAY),
         (synth.MONTEREY_DAY, synth.MONTEREY_DAY),
         (synth.TAHOE_DAYS[0], synth.TAHOE_DAYS[-1]),
     ]
-    assert [w.away_reason for w in ws] == ["shared home: out of town, 1 session"] * 3 + [
+    assert [w.away_reason for w in ws] == ["shared home: out of town, 1 session"] * 5 + [
         "shared home: out of town, 3 sessions"
     ]
 
@@ -455,7 +538,7 @@ def test_synthetic_tahoe_is_one_trip_through_two_silent_nights(fixture):
 def test_synthetic_oakland_dinner_splits_napa_from_santa_cruz(fixture):
     """With only the 5 km buffers as home, A's dinner 15 km out is no evidence and the two trips merge."""
     a, b, an_a, an_b, keys = fixture
-    merged = assemble(keys, an_a, an_b, ps_a=a, ps_b=b, city_km=5.0)[0]
+    [merged] = [w for w in assemble(keys, an_a, an_b, ps_a=a, ps_b=b, city_km=5.0) if dates(w)[0] == synth.NAPA_DAY]
     assert dates(merged) == (synth.NAPA_DAY, synth.SANTA_CRUZ_DAY)
 
 
@@ -467,6 +550,31 @@ def test_synthetic_monterey_backfills_all_of_as_photos(fixture):
     in_window = photos_in(w.start_utc, w.end_utc, a)
     assert w.photo_count_a == sum(local_date(p.utc_epoch) == synth.MONTEREY_DAY for p in a) == len(in_window)
     assert len(matched_photos(a, monterey, expanded=True)) == 3  # A's other 5 come from backfill
+
+
+def first_on(day: dt.date, ws: list[TripWindow]) -> TripWindow:
+    [w] = [w for w in ws if dates(w)[0] == day]
+    return w
+
+
+def test_synthetic_yosemite_tail_carries_the_day_only_a_shot(fixture):
+    a, b, an_a, an_b, keys = fixture
+    w = first_on(synth.YOSEMITE_DAYS[0], assemble(keys, an_a, an_b, ps_a=a, ps_b=b))
+    assert dates(w) == synth.YOSEMITE_DAYS and (w.photo_count_a, w.photo_count_b) == (14, 1)
+    assert w.photo_count_a == sum(local_date(p.utc_epoch) in synth.YOSEMITE_DAYS for p in a)
+    without = first_on(synth.YOSEMITE_DAYS[0], assemble(keys, an_a, an_b, ps_a=a, ps_b=b, tail_gap_hours=0))
+    assert dates(without) == (synth.YOSEMITE_DAYS[0],) * 2 and without.photo_count_a == 6
+
+
+def test_synthetic_mendocino_ends_where_b_is_seen_back_home(fixture):
+    """A stays on alone the next day. Only B's one photo at home keeps that day out."""
+    a, b, an_a, an_b, keys = fixture
+    w = first_on(synth.MENDOCINO_DAY, assemble(keys, an_a, an_b, ps_a=a, ps_b=b))
+    assert dates(w) == (synth.MENDOCINO_DAY, synth.MENDOCINO_DAY) and (w.photo_count_a, w.photo_count_b) == (6, 4)
+    assert w.photo_count_a == sum(local_date(p.utc_epoch) == synth.MENDOCINO_DAY for p in a)
+    not_home = [p for p in b if local_date(p.utc_epoch) != synth.HOME_EARLY_DAY]
+    w = first_on(synth.MENDOCINO_DAY, assemble(keys, an_a, an_b, ps_a=a, ps_b=not_home))
+    assert dates(w) == (synth.MENDOCINO_DAY, synth.HOME_EARLY_DAY)
 
 
 def test_synthetic_home_history_changes_nothing(fixture):
@@ -500,10 +608,14 @@ def test_cli_writes_trips_json(tmp_path):
         assert run(app, args).exit_code == 0, args
     out = run(app, ["trips", *d])
     assert out.exit_code == 0
-    assert "away=5 trips=4 old_home=0" in out.output and out.output.count("under 5 photos:") == 1
+    assert "away=7 trips=6 old_home=0" in out.output and out.output.count("under 5 photos:") == 1
+    assert "a=14 b=1 (shared home: out of town, 1 session) tails 1 h before, 27 h after" in out.output  # yosemite
     assert "homes a: one home throughout" in out.output and "homes b: one home throughout" in out.output
     ws = [TripWindow(**w) for w in json.loads((tmp_path / "trips.json").read_text())]
-    assert [dates(w)[0] for w in ws] == [synth.NAPA_DAY, synth.SANTA_CRUZ_DAY, synth.MONTEREY_DAY, synth.TAHOE_DAYS[0]]
+    firsts = [synth.YOSEMITE_DAYS[0], synth.MENDOCINO_DAY, synth.NAPA_DAY, synth.SANTA_CRUZ_DAY, synth.MONTEREY_DAY]
+    assert [dates(w)[0] for w in ws] == [*firsts, synth.TAHOE_DAYS[0]]
     assert run(app, ["trips", "--gap-hours", "4", *d]).exit_code == 2  # reach 3 > half of 4
     out = run(app, ["trips", "--no-past-homes", *d])
-    assert out.exit_code == 0 and "trips=4" in out.output and "homes a:" not in out.output
+    assert out.exit_code == 0 and "trips=6" in out.output and "homes a:" not in out.output
+    out = run(app, ["trips", "--tail-gap-hours", "0", *d])
+    assert out.exit_code == 0 and "trips=6" in out.output and " tails " not in out.output

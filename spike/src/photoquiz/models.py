@@ -89,3 +89,7 @@ class TripWindow:
     representative_geohash6: str
     away_reason: str
     kind: str = TRIP  # TRIP or OLD_HOME
+    # Tails (§1.7): hours the window reaches past its matched hours, before the first and after the
+    # last, along photos only one partner took. The matched part is the window less these.
+    tail_hours_before: int = 0
+    tail_hours_after: int = 0

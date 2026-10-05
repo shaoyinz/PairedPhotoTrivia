@@ -26,7 +26,8 @@ def test_csvs_pass_ingest_schema_check(written):
 def test_labels_hold_the_planted_trips(written):
     lines = written["labels"].read_text().splitlines()
     assert lines[0] == LABEL_HEADER
-    assert [line.split(",")[0] for line in lines[1:]] == ["tahoe", "monterey", "napa", "santa-cruz"]
+    names = [line.split(",")[0] for line in lines[1:]]
+    assert names == ["tahoe", "monterey", "napa", "santa-cruz", "yosemite", "mendocino"]
 
 
 def test_parquet_round_trip(written, tmp_path):

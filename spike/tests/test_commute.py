@@ -212,7 +212,8 @@ def test_a_shared_home_is_never_away():
 
 def test_synthetic_photos_are_away_exactly_on_the_planted_days():
     """Inferred anchors, every GPS photo of both partners: away <=> taken on a trip or near-trip day.
-    The near-trip is away too; only the >= 5 rule (§1.7) may drop it."""
+    The near-trip is away too; only the >= 5 rule (§1.7) may drop it. The one exception is B's photo
+    at home the morning after Mendocino, while A stays on."""
     data = synth.generate()
     libs = [apply_all(ps)[0] for ps in (data.a, data.b)]
     a, b = (infer_anchors(ps, person=n, now_utc=max(p.utc_epoch for p in ps)) for n, ps in zip("ab", libs))
@@ -222,5 +223,7 @@ def test_synthetic_photos_are_away_exactly_on_the_planted_days():
     away_days = {(d - dt.date(1970, 1, 1)).days for d in synth.AWAY_DATES}
     gps = [p for ps in libs for p in ps if p.has_gps]
     away = {p.asset_id for p in gps if is_away(LatLon(p.lat, p.lon), buf_a, buf_b, shared_home=True)}
-    assert away == {p.asset_id for p in gps if local_day(p) in away_days}
+    home_early = (synth.HOME_EARLY_DAY - dt.date(1970, 1, 1)).days
+    planted = {p.asset_id for p in gps if local_day(p) in away_days}
+    assert away == planted - {p.asset_id for p in libs[1] if p.has_gps and local_day(p) == home_early}
     assert 0 < len(away) < len(gps)

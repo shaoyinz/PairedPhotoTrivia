@@ -13,9 +13,14 @@ B ~43 km from home), weekday commute noise inside both buffers, and
                them are A's dinner in Oakland, outside both 5 km buffers but inside the 25 km
                home city, so it must split them (§1.7). Placed before the daily noise starts,
                with its own random stream, so it changes nothing else in the fixture
+  - yosemite:  2 days; B takes one photo on the first, A shoots both. Only the trip's tail (§1.7)
+               carries it into the second day
+  - mendocino: 1 day together; B is home by the next morning (one photo there) while A stays on
+               alone. B's photo at home must end the tail, so A's second day stays out. These two
+               come first, with a random stream of their own, so they change nothing else either
 plus a screenshot, a row with no capture timestamp, and a few imported (camera-less) photos.
 Every trip day has no photos overnight, so a trip must survive nights with no photos.
-`labels.csv` holds exactly the four planted trips, so the near-trip would be a false positive.
+`labels.csv` holds exactly the six planted trips, so the near-trip would be a false positive.
 """
 
 from __future__ import annotations
@@ -46,12 +51,20 @@ HALF_MOON_BAY = LatLon(37.4636, -122.4286)
 NAPA = LatLon(38.2975, -122.2869)
 OAKLAND = LatLon(37.8044, -122.2712)
 SANTA_CRUZ = LatLon(36.9741, -122.0308)
+YOSEMITE = LatLon(37.7456, -119.5936)
+MENDOCINO = LatLon(39.3077, -123.7995)
 
 TAHOE_DAYS = (dt.date(2026, 7, 10), dt.date(2026, 7, 11), dt.date(2026, 7, 12))
 MONTEREY_DAY = dt.date(2026, 6, 13)
 NEAR_TRIP_DAY = dt.date(2026, 5, 23)
 NAPA_DAY, DINNER_DAY, SANTA_CRUZ_DAY = dt.date(2026, 3, 28), dt.date(2026, 3, 29), dt.date(2026, 3, 30)  # Sat-Mon
-AWAY_DATES = frozenset((*TAHOE_DAYS, MONTEREY_DAY, NEAR_TRIP_DAY, NAPA_DAY, DINNER_DAY, SANTA_CRUZ_DAY))
+YOSEMITE_DAYS = (dt.date(2026, 3, 14), dt.date(2026, 3, 15))  # Sat-Sun
+BETWEEN_DAY = dt.date(2026, 3, 18)  # a Wednesday, A at home
+MENDOCINO_DAY, HOME_EARLY_DAY = dt.date(2026, 3, 21), dt.date(2026, 3, 22)  # Sat-Sun: B home on Sunday
+AWAY_DATES = frozenset(
+    (*TAHOE_DAYS, MONTEREY_DAY, NEAR_TRIP_DAY, NAPA_DAY, DINNER_DAY, SANTA_CRUZ_DAY, *YOSEMITE_DAYS, MENDOCINO_DAY)
+    + (HOME_EARLY_DAY,)  # A's day; B's one photo that day is at home
+)
 
 
 @dataclass
@@ -177,6 +190,25 @@ def generate(seed: int = 7) -> SynthData:
             _shoot(rng2, b, day, hour, spot, 2)
     _shoot(rng2, a, DINNER_DAY, 19.5, OAKLAND, 2)  # only A: evidence, not a match
 
+    # tails, before napa: a random stream of their own again
+    rng3 = random.Random(f"{seed}-tails")
+    for hour in (11.0, 13.0, 16.0, 19.0):  # yosemite: B's one photo at lunch, A into the evening
+        spot = _jitter(rng3, YOSEMITE, 2.0)
+        _shoot(rng3, a, YOSEMITE_DAYS[0], hour, spot, 2)
+        if hour == 13.0:
+            _shoot(rng3, b, YOSEMITE_DAYS[0], hour, spot, 1)
+    for hour in (10.0, 13.0, 15.0):  # the next day, only A shoots
+        _shoot(rng3, a, YOSEMITE_DAYS[1], hour, _jitter(rng3, YOSEMITE, 2.0), 2)
+    a.add(_utc(BETWEEN_DAY, 12.0), _jitter(rng3, HOME, 0.1))  # back home: no silence cap joins the two
+    for hour in (11.0, 14.0):  # mendocino: together
+        spot = _jitter(rng3, MENDOCINO, 2.0)
+        _shoot(rng3, a, MENDOCINO_DAY, hour, spot, 2)
+        _shoot(rng3, b, MENDOCINO_DAY, hour, spot, 2)
+    _shoot(rng3, a, MENDOCINO_DAY, 18.0, _jitter(rng3, MENDOCINO, 2.0), 2)
+    b.add(_utc(HOME_EARLY_DAY, 9.0), _jitter(rng3, HOME, 0.1))  # B home the next morning
+    for hour in (11.0, 14.0):  # A stays on alone
+        _shoot(rng3, a, HOME_EARLY_DAY, hour, _jitter(rng3, MENDOCINO, 2.0), 2)
+
     def key(p: PhotoMeta) -> tuple[bool, int]:
         return (p.utc_epoch is None, p.utc_epoch or 0)
 
@@ -185,6 +217,8 @@ def generate(seed: int = 7) -> SynthData:
         _label("monterey", "Monterey", a.photos + b.photos, (MONTEREY_DAY,)),
         _label("napa", "Napa", a.photos + b.photos, (NAPA_DAY,)),
         _label("santa-cruz", "Santa Cruz", a.photos + b.photos, (SANTA_CRUZ_DAY,)),
+        _label("yosemite", "Yosemite", a.photos + b.photos, YOSEMITE_DAYS),
+        _label("mendocino", "Mendocino", a.photos + b.photos, (MENDOCINO_DAY,)),
     ]
     return SynthData(sorted(a.photos, key=key), sorted(b.photos, key=key), labels)
 
