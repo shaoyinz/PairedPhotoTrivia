@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A playable demo of Couples Photo Quiz: it finds the trips a couple took together by matching two photo libraries, then asks each partner where and when the other's photos were taken.">
+<meta property="og:title" content="Couples Photo Quiz">
+<meta property="og:description" content="A playable demo of Couples Photo Quiz: it finds the trips a couple took together by matching two photo libraries, then asks each partner where and when the other's photos were taken.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://shaoyinz.github.io/PairedPhotoTrivia/">
+<meta property="og:image" content="https://shaoyinz.github.io/PairedPhotoTrivia/photos/sur-bixby.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<title>Couples Photo Quiz</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap">
+<style>
+:root { color-scheme: light; padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px); }
+body { margin: 0; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+/* Layout: the pitch on the left, a phone you can actually play on the right; one column on phones, the game first. */
+:root {
+  --paper: #edf1f4;
+  --card: #ffffff;
+  --ink: #122130;
+  --ink-2: #536373;
+  --rule: #d5dde4;
+  --chip: #e5ebf0;
+  --guess: #2d58cf;
+  --on-guess: #ffffff;
+  --truth: #f2a516;
+  --truth-ink: #8a5a00;
+  --good: #20805a;
+  --miss: #b0463c;
+  --water: #c8d8e4;
+  --land: #fbfaf6;
+  --coast: #9cafbf;
+  --line: #bac6d0;
+  --label: #3b4a58;
+  --bezel: #17222c;
+  --on-truth: #1d1405;
+  --on-scrim: #f3f6f9;
+  --shade: rgb(18 33 48 / .22);
+  --scrim: rgb(9 16 22 / .88);
+  --f-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --f-body: "Figtree", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-data: "DM Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0d151c; --card: #15202a; --ink: #e4ecf2; --ink-2: #93a4b3; --rule: #263441; --chip: #1e2b37;
+    --guess: #7b9bff; --on-guess: #0b1220; --truth: #f5b629; --truth-ink: #f6c65d; --good: #5cc48f; --miss: #ef8b80;
+    --water: #0f2333; --land: #1c2934; --coast: #3d5466; --line: #34485a; --label: #b5c3cf;
+    --bezel: #000000; --shade: rgb(0 0 0 / .5); --scrim: rgb(0 0 0 / .9);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0d151c; --card: #15202a; --ink: #e4ecf2; --ink-2: #93a4b3; --rule: #263441; --chip: #1e2b37;
+  --guess: #7b9bff; --on-guess: #0b1220; --truth: #f5b629; --truth-ink: #f6c65d; --good: #5cc48f; --miss: #ef8b80;
+  --water: #0f2333; --land: #1c2934; --coast: #3d5466; --line: #34485a; --label: #b5c3cf;
+  --bezel: #000000; --shade: rgb(0 0 0 / .5); --scrim: rgb(0 0 0 / .9);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font: 15px/1.55 var(--f-body); }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--guess); outline-offset: 2px; }
+.mono { font-family: var(--f-data); font-variant-numeric: tabular-nums; }
+
+.page {
+  max-width: 1120px; margin: 0 auto; padding-inline: 24px; padding-block: 40px 56px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 392px; grid-template-areas: "intro device" "explain device";
+  column-gap: 64px; row-gap: 8px; align-items: start;
+}
+.intro { grid-area: intro; }
+.explain { grid-area: explain; display: grid; gap: 40px; padding-top: 24px; }
+.device-wrap { grid-area: device; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); }
+
+.eyebrow { font: 500 12px/1 var(--f-data); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 14px; }
+h1 { font: 800 clamp(40px, 6vw, 64px)/0.98 var(--f-display); letter-spacing: -0.025em; margin: 0 0 18px; text-wrap: balance; }
+.lede { font-size: 19px; line-height: 1.5; max-width: 34em; margin: 0 0 18px; text-wrap: pretty; }
+.try { display: flex; gap: 10px; align-items: baseline; color: var(--ink-2); margin: 0; max-width: 38em; }
+.try b { color: var(--ink); font-weight: 600; }
+.arrow { font-family: var(--f-data); color: var(--guess); }
+
+.explain h2 { font: 700 24px/1.15 var(--f-display); letter-spacing: -0.01em; margin: 0 0 14px; text-wrap: balance; }
+.explain p { margin: 0 0 12px; max-width: 38em; }
+.steps { list-style: none; padding: 0; margin: 0 0 22px; display: grid; gap: 14px; counter-reset: s; max-width: 40em; }
+.steps li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; counter-increment: s; }
+.steps li::before { content: counter(s); font: 500 13px/1 var(--f-data); width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--rule); color: var(--ink-2); margin-top: 1px; }
+.steps b { font-weight: 600; }
+
+.figure { background: var(--card); border: 1px solid var(--rule); border-radius: 14px; padding: 16px 16px 10px; }
+.figure-scroll { overflow-x: auto; }
+.figure svg { display: block; width: 100%; min-width: 500px; height: auto; }
+.figure figcaption { font-size: 13px; color: var(--ink-2); padding-top: 8px; border-top: 1px solid var(--rule); margin-top: 6px; }
+.d-day { font: 500 10px var(--f-data); fill: var(--ink-2); }
+.d-lane { font: 600 11px var(--f-body); fill: var(--ink); }
+.d-axis { stroke: var(--rule); stroke-width: 1; }
+.d-home { fill: var(--ink-2); opacity: .55; }
+.d-away { fill: var(--ink); }
+.d-match { fill: var(--guess); }
+.d-link { stroke: var(--guess); stroke-width: 1.4; }
+.d-link.ignored { stroke: var(--ink-2); stroke-dasharray: 2 2; }
+.d-trip { fill: var(--guess); opacity: .09; }
+.d-brace { stroke: var(--guess); stroke-width: 1.5; fill: none; }
+.d-note { font: 500 10.5px var(--f-body); fill: var(--ink-2); }
+.d-tripl { font: 600 11px var(--f-body); fill: var(--guess); }
+
+.hash { background: var(--card); border: 1px solid var(--rule); border-radius: 14px; padding: 14px 16px; display: grid; gap: 8px; overflow-x: auto; }
+.hash-row { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; align-items: baseline; }
+.hash-row span:first-child { font-size: 12px; color: var(--ink-2); }
+.hash-row code { font: 13px/1.4 var(--f-data); white-space: nowrap; }
+.hash-row.out code { color: var(--guess); }
+.split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.split h3 { font: 600 13px/1 var(--f-body); letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 8px; }
+.split ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+
+details.credits { font-size: 13px; color: var(--ink-2); max-width: 46em; }
+details.credits summary { cursor: pointer; color: var(--ink); font-weight: 600; }
+details.credits ul { padding-left: 18px; margin: 10px 0 0; display: grid; gap: 3px; }
+details.credits a { color: inherit; }
+.fine { font-size: 13px; color: var(--ink-2); }
+.src { margin: 14px 0 0; font-size: 14px; }
+.src a, .explain a.repo { color: var(--guess); font-weight: 600; text-underline-offset: 3px; }
+
+/* ---------- the phone ---------- */
+.device { width: 392px; height: 812px; padding: 10px; border-radius: 52px; background: var(--bezel); box-shadow: 0 30px 60px -24px var(--shade), 0 2px 4px var(--shade); }
+.app { position: relative; height: 100%; border-radius: 42px; overflow: hidden; background: var(--paper); display: flex; flex-direction: column; isolation: isolate; }
+.status { flex: none; height: 46px; display: flex; align-items: center; justify-content: space-between; padding: 6px 30px 0 34px; font: 600 14px var(--f-body); }
+.status .island { width: 100px; height: 28px; border-radius: 16px; background: var(--bezel); }
+.status .bars { display: flex; gap: 2px; align-items: flex-end; height: 11px; }
+.status .bars i { width: 3px; background: currentColor; border-radius: 1px; }
+.screen { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 0 20px; border-radius: 14px; border: 0; cursor: pointer; font-weight: 600; font-size: 16px; }
+.btn.primary { background: var(--guess); color: var(--on-guess); }
+.btn.primary:disabled { background: var(--chip); color: var(--ink-2); cursor: default; }
+.btn.quiet { background: var(--chip); color: var(--ink); }
+.btn.link { background: none; color: var(--guess); min-height: 40px; padding: 0 8px; }
+.btn.block { width: 100%; }
+.actions { flex: none; padding: 10px 16px 16px; display: grid; gap: 6px; background: var(--paper); border-top: 1px solid var(--rule); }
+
+/* home */
+.home { padding: 6px 18px 24px; display: grid; gap: 18px; }
+.pair { display: flex; align-items: center; gap: 10px; }
+.avatars { display: flex; }
+.av { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font: 700 14px var(--f-display); color: var(--on-guess); border: 2px solid var(--paper); }
+.av.m { background: var(--guess); }
+.av.t { background: var(--truth); color: var(--on-truth); margin-left: -10px; }
+.pair-txt { line-height: 1.25; }
+.pair-txt b { font-weight: 700; }
+.pair-txt span { display: block; font-size: 12.5px; color: var(--ink-2); }
+.streak { margin-left: auto; font: 500 12px var(--f-data); padding: 6px 10px; border-radius: 999px; background: var(--chip); white-space: nowrap; }
+.big { font: 800 44px/0.95 var(--f-display); letter-spacing: -0.03em; margin: 4px 0 6px; text-wrap: balance; }
+.big-sub { margin: 0; color: var(--ink-2); font-size: 14px; }
+.today { background: var(--card); border-radius: 18px; padding: 16px; display: grid; gap: 12px; box-shadow: 0 1px 2px var(--shade); }
+.today .eyebrow { margin: 0; }
+.today p { margin: 0; }
+.list-h { display: flex; justify-content: space-between; align-items: baseline; font: 700 17px var(--f-display); margin: 0; }
+.list-h span { font: 500 12px var(--f-data); color: var(--ink-2); }
+.trips { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
+.trip { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 11px 0; border-bottom: 1px solid var(--rule); }
+.trip b { font-weight: 600; }
+.trip .dates { font: 12.5px var(--f-data); color: var(--ink-2); }
+.trip .meta { grid-column: 1 / -1; font-size: 12.5px; color: var(--ink-2); }
+.trip .score { align-self: center; grid-row: 1 / span 2; grid-column: 2; font: 500 12px var(--f-data); padding: 4px 8px; border-radius: 8px; background: var(--chip); }
+.oldhome { background: var(--chip); border-radius: 14px; padding: 12px 14px; font-size: 13.5px; }
+.oldhome b { font-weight: 600; }
+
+/* play */
+.bar { flex: none; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 0 14px 8px; }
+.icon-btn { width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--chip); display: grid; place-items: center; cursor: pointer; }
+.icon-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
+.progress { display: grid; gap: 5px; }
+.progress small { font: 500 11.5px var(--f-data); color: var(--ink-2); letter-spacing: .02em; }
+.segs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.segs i { height: 4px; border-radius: 2px; background: var(--rule); }
+.segs i.done { background: var(--guess); }
+.segs i.now { background: var(--ink); }
+.tally { font: 500 13px var(--f-data); text-align: right; line-height: 1.15; }
+.tally small { display: block; font-size: 10.5px; color: var(--ink-2); }
+
+.shot { position: relative; flex: none; height: 37%; margin: 0 14px; border-radius: 16px; overflow: hidden; background: var(--chip); }
+.shot.small { height: 21%; }
+.shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.owner { position: absolute; left: 10px; bottom: 10px; font: 600 12px var(--f-body); padding: 5px 9px; border-radius: 999px; background: var(--scrim); color: var(--on-scrim); }
+.expand { position: absolute; right: 8px; top: 8px; width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--scrim); color: var(--on-scrim); display: grid; place-items: center; cursor: pointer; }
+.expand svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
+
+.stage { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 12px 14px 0; gap: 8px; }
+.stage-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.stage-h h2 { font: 700 20px var(--f-display); margin: 0; }
+.stage-h p { margin: 0; font-size: 12.5px; color: var(--ink-2); text-align: right; }
+.map-slot { flex: 1; min-height: 200px; border-radius: 14px; overflow: hidden; position: relative; border: 1px solid var(--rule); }
+.stage.reveal { overflow-y: auto; gap: 10px; padding-bottom: 12px; }
+.stage.reveal .map-slot { flex: none; height: 230px; }
+
+/* map */
+.map { position: absolute; inset: 0; touch-action: none; user-select: none; -webkit-user-select: none; }
+.map svg { display: block; width: 100%; height: 100%; cursor: crosshair; }
+.map.locked svg { cursor: grab; }
+.map .water { fill: var(--water); }
+.map .land { fill: var(--land); stroke: var(--coast); stroke-width: .7; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.map .borders { fill: none; stroke: var(--line); stroke-width: .8; vector-effect: non-scaling-stroke; }
+.map .states { fill: none; stroke: var(--line); stroke-width: .6; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; }
+.map .lbl text { font: 500 10.5px var(--f-body); fill: var(--label); paint-order: stroke; stroke: var(--land); stroke-width: 3px; stroke-linejoin: round; }
+.map .lbl circle { fill: var(--label); }
+.map .lbl.r1 text { font-weight: 600; font-size: 11px; }
+.map .link { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.map .pin path { stroke: var(--paper); stroke-width: 1.5; }
+.map .pin.guess path { fill: var(--guess); }
+.map .pin.truth path { fill: var(--truth); }
+.map .pin circle { fill: var(--paper); }
+.map-ctl { position: absolute; right: 8px; top: 8px; display: grid; gap: 4px; }
+.map-ctl button { min-width: 32px; height: 32px; padding: 0 8px; border-radius: 9px; border: 1px solid var(--rule); background: var(--card); cursor: pointer; font: 600 15px var(--f-body); }
+.map-ctl button[data-z="world"] { font: 500 11px var(--f-data); }
+.scale { position: absolute; left: 10px; bottom: 8px; display: grid; gap: 2px; font: 500 10.5px var(--f-data); color: var(--label); pointer-events: none; }
+.scale-bar { height: 5px; border: 1.5px solid var(--label); border-top: 0; }
+.map-hint { position: absolute; left: 10px; top: 10px; right: 90px; font-size: 12.5px; color: var(--label); pointer-events: none; }
+.map-msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 16px; font-size: 13px; color: var(--ink-2); }
+
+/* when */
+.when { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; padding-bottom: 8px; }
+.crumbs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.crumb { border: 1px solid var(--rule); background: var(--card); border-radius: 12px; padding: 6px 10px; text-align: left; cursor: pointer; line-height: 1.2; }
+.crumb small { display: block; font-size: 11px; color: var(--ink-2); }
+.crumb b { font: 500 15px var(--f-data); }
+.crumb.on { border-color: var(--guess); box-shadow: inset 0 0 0 1px var(--guess); }
+.crumb:disabled { cursor: default; opacity: .55; }
+.pick { display: grid; gap: 6px; }
+.pick.years, .pick.months { grid-template-columns: repeat(4, 1fr); }
+.pick.days { grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.pick button { min-height: 42px; border-radius: 10px; border: 0; background: var(--card); cursor: pointer; font: 500 14px var(--f-data); }
+.pick.days button { min-height: 32px; font-size: 13px; }
+.pick button.sel { background: var(--guess); color: var(--on-guess); }
+.pick .wd { font: 500 10.5px var(--f-data); color: var(--ink-2); text-align: center; padding-bottom: 2px; }
+.when-q { margin: 0; font-size: 13px; color: var(--ink-2); }
+
+/* reveal */
+.result { background: var(--card); border-radius: 16px; padding: 14px; display: grid; gap: 10px; }
+.res-head { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
+.res-head h3 { font: 700 19px/1.15 var(--f-display); margin: 0; }
+.res-head p { margin: 2px 0 0; font-size: 13px; color: var(--ink-2); }
+.res-pts { font: 800 26px/1 var(--f-display); color: var(--guess); white-space: nowrap; }
+.res-pts small { display: block; font: 500 10.5px var(--f-data); color: var(--ink-2); text-align: right; margin-top: 3px; }
+.rows { display: grid; gap: 8px; margin: 0; }
+.row { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; padding-top: 8px; border-top: 1px solid var(--rule); }
+.row dt { font-size: 12px; color: var(--ink-2); }
+.row dd { margin: 0; font-size: 14px; }
+.row .pts { font: 500 13px var(--f-data); }
+.checks { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.chk { font: 500 11.5px var(--f-data); padding: 3px 7px; border-radius: 7px; background: var(--chip); }
+.chk.ok { color: var(--good); }
+.chk.no { color: var(--miss); }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+.legend .g { background: var(--guess); } .legend .t { background: var(--truth); }
+.from { font-size: 13px; color: var(--ink-2); margin: 0; }
+.from b { color: var(--ink); font-weight: 600; }
+
+/* summary + send */
+.sum { padding: 4px 18px 20px; display: grid; gap: 16px; }
+.sum-score { display: flex; align-items: baseline; gap: 10px; }
+.sum-score b { font: 800 64px/0.9 var(--f-display); letter-spacing: -0.03em; }
+.sum-score span { color: var(--ink-2); font: 500 13px var(--f-data); }
+.sum-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.sum-list li { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.sum-list img { width: 58px; height: 44px; object-fit: cover; border-radius: 8px; display: block; }
+.sum-list b { font-weight: 600; display: block; line-height: 1.2; }
+.sum-list small { font: 12px var(--f-data); color: var(--ink-2); }
+.sum-list .p { font: 500 14px var(--f-data); }
+.note { background: var(--chip); border-radius: 14px; padding: 12px 14px; font-size: 13.5px; margin: 0; }
+.veto { padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
+.veto h2 { font: 700 22px/1.1 var(--f-display); margin: 0; text-wrap: balance; }
+.veto p { margin: 0; font-size: 14px; color: var(--ink-2); }
+.veto .shot { margin: 0; flex: 1; height: auto; min-height: 180px; }
+.veto-count { font: 500 12px var(--f-data); color: var(--ink-2); }
+.veto-actions { display: grid; grid-template-columns: 1fr 1.4fr; gap: 8px; }
+.sent { padding: 24px 22px; display: grid; gap: 14px; align-content: start; }
+.sent h2 { font: 800 34px/1 var(--f-display); margin: 0; letter-spacing: -0.02em; }
+.sent p { margin: 0; color: var(--ink-2); }
+.sent img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 16px; display: block; }
+
+.lightbox { position: absolute; inset: 0; z-index: 5; background: var(--scrim); display: grid; place-items: center; padding: 16px; cursor: zoom-out; border: 0; }
+.lightbox img { max-width: 100%; max-height: 100%; border-radius: 10px; }
+
+@media (max-width: 860px) {
+  .page { grid-template-columns: minmax(0, 1fr); grid-template-areas: "intro" "device" "explain"; padding-inline: 16px; padding-block: 24px 40px; row-gap: 20px; }
+  .device-wrap { position: static; }
+  .device { width: 100%; max-width: 440px; margin: 0 auto; height: min(780px, calc(100svh - 24px)); padding: 0; border-radius: 26px; background: none; box-shadow: 0 0 0 1px var(--rule), 0 20px 40px -24px var(--shade); }
+  .app { border-radius: 26px; }
+  .status { display: none; }
+  .bar { padding-top: 12px; }
+  .home { padding-top: 16px; }
+  .lede { font-size: 17px; }
+}
+@media (max-width: 520px) { .split { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: no-preference) {
+  .map .pin .drop { animation: drop .28s cubic-bezier(.2, .9, .3, 1.3); }
+  @keyframes drop { from { transform: translateY(-14px); opacity: 0; } }
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header class="intro">
+    <p class="eyebrow">iOS prototype · playable demo</p>
+    <h1>Couples Photo Quiz</h1>
+    <p class="lede">It finds the trips you two took together by comparing both of your photo libraries. Then it quizzes each of you on the other's photos: where was this, and when?</p>
+    <p class="try"><span class="arrow" aria-hidden="true">→</span><span>You're playing as <b>Maya</b>. Her partner <b>Theo</b> approved today's five photos. Drop a pin, pick the date, see how close you got.</span></p>
+    <p class="src"><a href="https://github.com/shaoyinz/PairedPhotoTrivia">Code and product spec on GitHub</a></p>
+  </header>
+
+  <div class="device-wrap">
+    <div class="device">
+      <div class="app" id="app"></div>
+    </div>
+  </div>
+
+  <div class="explain">
+    <section>
+      <h2>How it finds your trips</h2>
+      <ol class="steps">
+        <li><span><b>Each phone reads when and where its photos were taken.</b> That happens on the phone, and the photos stay there.</span></li>
+        <li><span><b>It rounds every photo to a cell about 1 km wide and 1 hour long,</b> then scrambles the cell with a key that only your two phones have.</span></li>
+        <li><span><b>The phones compare scrambled cells.</b> A cell you both have is an hour you were in the same place. Cells near home or work don't count.</span></li>
+        <li><span><b>Shared hours close together become a trip</b> once there are at least 5 photos between you. A trip runs overnight until one of you is back home.</span></li>
+      </ol>
+      <figure class="figure">
+        <div class="figure-scroll"><svg id="diagram" viewBox="0 0 560 158" role="img" aria-label="Maya's and Theo's photos over one week in July 2024. Nineteen hours match between Friday the 12th and Sunday the 14th, which becomes the Big Sur trip. One match at home on Thursday is ignored."></svg></div>
+        <figcaption>Big Sur, as the two phones saw it. Each tick is an hour with a photo in it. Blue links are cells both phones had.</figcaption>
+      </figure>
+    </section>
+
+    <section>
+      <h2>What leaves your phone</h2>
+      <p>Theo's photo at the McWay Falls overlook, Saturday at 1:10 pm, becomes one cell. Only the scrambled version syncs.</p>
+      <div class="hash">
+        <div class="hash-row"><span>On Theo's phone</span><code>9q3mxq · 2024-07-13 20:00 UTC</code></div>
+        <div class="hash-row out"><span>What syncs</span><code>e1e8 37d3 1009 157a eb0e 8726 9a01 cc87</code></div>
+      </div>
+      <div class="split">
+        <div>
+          <h3>Stays on your phone</h3>
+          <ul><li>Your photos</li><li>Exact places and times</li><li>Where you live and work</li><li>Memory notes you keep private</li></ul>
+        </div>
+        <div>
+          <h3>Syncs between you two</h3>
+          <ul><li>Scrambled cells, which the server can't read</li><li>Photos the owner approves for a round</li><li>Scores and streaks</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>About this demo</h2>
+      <p>Maya, Theo and their trips are made up. The photos show real places and come from Wikimedia Commons. The round follows the product spec: five photos from one trip, full points within 1 km of the spot and none past 500 km, then points for the right year, month and day. In the app, the owner previews each photo and can skip any of them before it's sent. The spec, plan and trip-detection code are <a class="repo" href="https://github.com/shaoyinz/PairedPhotoTrivia">on GitHub</a>.</p>
+      <details class="credits">
+        <summary>Photo and map credits</summary>
+        <ul id="credits"></ul>
+        <p>Photos from Wikimedia Commons, resized. Map data from Natural Earth (public domain).</p>
+      </details>
+    </section>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+"use strict";
+// ---------------------------------------------------------------- data (made up)
+const TRIPS = [
+  { id: "ice", place: "Iceland", start: "2025-06-27", end: "2025-07-01", maya: 64, theo: 97, hours: 41 },
+  { id: "tahoe", place: "Lake Tahoe", start: "2025-01-17", end: "2025-01-19", maya: 22, theo: 15, hours: 12 },
+  { id: "napa", place: "Napa", start: "2024-09-21", end: "2024-09-21", maya: 9, theo: 14, hours: 5 },
+  { id: "sur", place: "Big Sur", start: "2024-07-12", end: "2024-07-14", maya: 38, theo: 52, hours: 19 },
+  { id: "sea", place: "Seattle", start: "2024-05-24", end: "2024-05-27", maya: 31, theo: 12, hours: 9 },
+  { id: "kix", place: "Kyoto and Osaka", start: "2024-04-02", end: "2024-04-10", maya: 143, theo: 88, hours: 52 },
+  { id: "lis", place: "Lisbon and Sintra", start: "2023-10-03", end: "2023-10-08", maya: 71, theo: 59, hours: 33 },
+  { id: "yos", place: "Yosemite", start: "2023-08-11", end: "2023-08-13", maya: 27, theo: 40, hours: 14 },
+  { id: "mex", place: "Mexico City", start: "2022-11-18", end: "2022-11-23", maya: 56, theo: 35, hours: 24 },
+];
+const ROUND_ORDER = ["sur", "ice", "lis"];
+const ROUNDS = {
+  sur: { tz: "PDT", region: "California", extras: ["sur-x1", "sur-x2", "sur-x3"], photos: [
+    { f: "sur-mcway", by: "theo", name: "McWay Falls", area: "Big Sur, California", lat: 36.1580, lon: -121.6714, t: "2024-07-13T13:10" },
+    { f: "sur-bixby", by: "theo", name: "Bixby Creek Bridge", area: "Big Sur, California", lat: 36.3730, lon: -121.9020, t: "2024-07-12T17:45" },
+    { f: "sur-lobos", by: "maya", name: "Point Lobos", area: "Carmel, California", lat: 36.5150, lon: -121.9425, t: "2024-07-14T11:00" },
+    { f: "sur-pfeiffer", by: "theo", name: "Keyhole Arch, Pfeiffer Beach", area: "Big Sur, California", lat: 36.2380, lon: -121.8160, t: "2024-07-13T19:50" },
+    { f: "sur-monterey", by: "theo", name: "Old Fisherman's Wharf", area: "Monterey, California", lat: 36.6036, lon: -121.8930, t: "2024-07-14T14:30" },
+  ] },
+  ice: { tz: "GMT", region: "Iceland", extras: ["ice-x1", "ice-x2", "ice-x3"], photos: [
+    { f: "ice-skoga", by: "theo", name: "Skógafoss", area: "South Coast, Iceland", lat: 63.5321, lon: -19.5114, t: "2025-06-29T11:20" },
+    { f: "ice-hallgrims", by: "theo", name: "View from Hallgrímskirkja", area: "Reykjavík, Iceland", lat: 64.1417, lon: -21.9266, t: "2025-06-27T21:40" },
+    { f: "ice-jokuls", by: "maya", name: "Jökulsárlón glacier lagoon", area: "Southeast Iceland", lat: 64.0480, lon: -16.1790, t: "2025-06-30T10:15" },
+    { f: "ice-kirkju", by: "theo", name: "Kirkjufell", area: "Snæfellsnes, Iceland", lat: 64.9266, lon: -23.3108, t: "2025-06-28T15:05" },
+    { f: "ice-reynis", by: "theo", name: "Reynisfjara black sand beach", area: "Vík, Iceland", lat: 63.4044, lon: -19.0447, t: "2025-06-29T14:50" },
+  ] },
+  lis: { tz: "WEST", region: "Portugal", extras: ["lis-x1", "lis-x2", "lis-x3"], photos: [
+    { f: "lis-pena", by: "theo", name: "Pena Palace", area: "Sintra, Portugal", lat: 38.7876, lon: -9.3906, t: "2023-10-06T11:05" },
+    { f: "lis-comercio", by: "theo", name: "Praça do Comércio", area: "Lisbon, Portugal", lat: 38.7080, lon: -9.1365, t: "2023-10-04T18:20" },
+    { f: "lis-roca", by: "maya", name: "Cabo da Roca", area: "Sintra coast, Portugal", lat: 38.7804, lon: -9.4989, t: "2023-10-06T17:50" },
+    { f: "lis-tram", by: "theo", name: "Tram 28 by Lisbon Cathedral", area: "Lisbon, Portugal", lat: 38.7099, lon: -9.1335, t: "2023-10-05T10:40" },
+    { f: "lis-belem", by: "theo", name: "Belém Tower", area: "Lisbon, Portugal", lat: 38.6916, lon: -9.2160, t: "2023-10-05T15:15" },
+  ] },
+};
+const EXTRA_NAMES = { "sur-x1": "McWay Falls", "sur-x2": "Point Lobos", "sur-x3": "Monterey harbor", "lis-x1": "Belém Tower at night", "lis-x2": "Praça do Comércio from the river", "lis-x3": "Cliffs at Cabo da Roca", "ice-x1": "Harbor seal at Jökulsárlón", "ice-x2": "Skógafoss", "ice-x3": "Reynisfjara" };
+const CREDITS = {"sur-mcway":["King of Hearts","CC BY-SA 3.0","https://creativecommons.org/licenses/by-sa/3.0/","https://commons.wikimedia.org/wiki/File:McWay_Falls_Big_Sur_May_2011_002.jpg"],"sur-bixby":["Tuxyso","CC BY-SA 3.0","https://creativecommons.org/licenses/by-sa/3.0/","https://commons.wikimedia.org/wiki/File:Bixby_Creek_Bridge_2013.jpg"],"sur-lobos":["King of Hearts","CC BY-SA 3.0","https://creativecommons.org/licenses/by-sa/3.0/","https://commons.wikimedia.org/wiki/File:Point_Lobos_September_2012_013.jpg"],"sur-pfeiffer":["Kace Rodriguez","CC0","https://creativecommons.org/publicdomain/zero/1.0/","https://commons.wikimedia.org/wiki/File:Pfeiffer_Beach_at_Dusk_(Unsplash).jpg"],"sur-monterey":["King of Hearts","CC BY-SA 4.0","https://creativecommons.org/licenses/by-sa/4.0/","https://commons.wikimedia.org/wiki/File:Fisherman%27s_Wharf_Monterey_September_2013_007.jpg"],"lis-pena":["CEphoto, Uwe Aranas","CC BY-SA 3.0","https://creativecommons.org/licenses/by-sa/3.0/","https://commons.wikimedia.org/wiki/File:Sintra_Portugal_Pal%C3%A1cio_da_Pena-01.jpg"],"lis-comercio":["Berthold Werner","CC BY-SA 4.0","https://creativecommons.org/licenses/by-sa/4.0/","https://commons.wikimedia.org/wiki/File:Lisbon_Pra%C3%A7a_do_Com%C3%A9rcio_BW_2018-10-08_17-42-58.jpg"],"lis-roca":["Ввласенко","CC BY-SA 3.0","https://creativecommons.org/licenses/by-sa/3.0/","https://commons.wikimedia.org/wiki/File:Cabo_da_Roca_-_Cape_Roca.JPG"],"lis-tram":["Chabe01","CC BY 4.0","https://creativecommons.org/licenses/by/4.0/","https://commons.wikimedia.org/wiki/File:Tramway_place_Cath%C3%A9drale_Lisbonne_6.jpg"],"lis-belem":["Berthold Werner","CC BY-SA 4.0","https://creativecommons.org/licenses/by-sa/4.0/","https://commons.wikimedia.org/wiki/File:Lisbon_Torre_de_Bel%C3%A9m_BW_2018-10-03_16-33-21.jpg"],"ice-skoga":["Jakub Hałun","CC BY 4.0","https://creativecommons.org/licenses/by/4.0/","https://commons.wikimedia.org/wiki/File:Sk%C3%B3gafoss_Waterfall,_Iceland,_20240720_1318_2975.jpg"],"ice-hallgrims":["Jakec","CC BY-SA 3.0","https://creativecommons.org/licenses/by-sa/3.0/","https://commons.wikimedia.org/wiki/File:View_from_Hallgr%C3%ADmskirkja_4.JPG"],"ice-jokuls":["Jakub Hałun","CC BY 4.0","https://creativecommons.org/licenses/by/4.0/","https://commons.wikimedia.org/wiki/File:J%C3%B6kuls%C3%A1rl%C3%B3n,_Iceland,_20240719_1142_2543.jpg"],"ice-kirkju":["Jakub Hałun","CC BY 4.0","https://creativecommons.org/licenses/by/4.0/","https://commons.wikimedia.org/wiki/File:Kirkjufell,_Iceland,_20240714_1631_0713.jpg"],"ice-reynis":["Jakub Hałun","CC BY-SA 4.0","https://creativecommons.org/licenses/by-sa/4.0/","https://commons.wikimedia.org/wiki/File:Reynisfjara,_Iceland,_20230501_1641_4049.jpg"],"sur-x1":["King of Hearts","CC BY-SA 4.0","https://creativecommons.org/licenses/by-sa/4.0/","https://commons.wikimedia.org/wiki/File:McWay_Falls_Big_Sur_September_2012_001.jpg"],"sur-x2":["King of Hearts","CC BY-SA 3.0","https://creativecommons.org/licenses/by-sa/3.0/","https://commons.wikimedia.org/wiki/File:Point_Lobos_September_2012_007.jpg"],"sur-x3":["King of Hearts","CC BY-SA 4.0","https://creativecommons.org/licenses/by-sa/4.0/","https://commons.wikimedia.org/wiki/File:Fisherman%27s_Wharf_Monterey_September_2013_001.jpg"],"lis-x1":["Rodrigo.Argenton","CC BY-SA 4.0","https://creativecommons.org/licenses/by-sa/4.0/","https://commons.wikimedia.org/wiki/File:Torre_de_Bel%C3%A9m_por_Rodrigo_Tetsuo_Argenton_(2).jpg"],"lis-x2":["Jakub Hałun","CC BY 4.0","https://creativecommons.org/licenses/by/4.0/","https://commons.wikimedia.org/wiki/File:View_of_Pra%C3%A7a_do_Com%C3%A9rcio_from_the_Tagus_River_in_Lisbon,_20250604_2038_9656.jpg"],"lis-x3":["Jakub Hałun","CC BY 4.0","https://creativecommons.org/licenses/by/4.0/","https://commons.wikimedia.org/wiki/File:Cliffs_at_Cabo_da_Roca,_Portugal,_20250606_1522_0263.jpg"],"ice-x1":["Giles Laurent","CC BY-SA 4.0","https://creativecommons.org/licenses/by-sa/4.0/","https://commons.wikimedia.org/wiki/File:021_Wild_smiling_harbor_seal_at_J%C3%B6kuls%C3%A1rl%C3%B3n_(Iceland)_Photo_by_Giles_Laurent.jpg"],"ice-x2":["Jakub Hałun","CC BY 4.0","https://creativecommons.org/licenses/by/4.0/","https://commons.wikimedia.org/wiki/File:Sk%C3%B3gafoss_Waterfall,_Iceland,_20240720_1330_2993.jpg"],"ice-x3":["Diego Delso","CC BY-SA 4.0","https://creativecommons.org/licenses/by-sa/4.0/","https://commons.wikimedia.org/wiki/File:Reynisfjara,_Su%C3%B0urland,_Islandia,_2014-08-17,_DD_164.JPG"]};
+// [name, lat, lon, rank]: rank sets the zoom a label appears at
+const PLACES = [
+  ["New York", 40.7128, -74.006, 1], ["Mexico City", 19.4326, -99.1332, 1], ["London", 51.5074, -0.1278, 1], ["Paris", 48.8566, 2.3522, 1],
+  ["Tokyo", 35.6762, 139.6503, 1], ["Sydney", -33.8688, 151.2093, 1], ["São Paulo", -23.5505, -46.6333, 1], ["Cairo", 30.0444, 31.2357, 1],
+  ["Mumbai", 19.076, 72.8777, 1], ["Beijing", 39.9042, 116.4074, 1], ["Moscow", 55.7558, 37.6173, 1], ["Lagos", 6.5244, 3.3792, 1],
+  ["Los Angeles", 34.0522, -118.2437, 1],
+  ["San Francisco", 37.7749, -122.4194, 2], ["Seattle", 47.6062, -122.3321, 2], ["Vancouver", 49.2827, -123.1207, 2], ["Chicago", 41.8781, -87.6298, 2],
+  ["Toronto", 43.6532, -79.3832, 2], ["Boston", 42.3601, -71.0589, 2], ["Miami", 25.7617, -80.1918, 2], ["Denver", 39.7392, -104.9903, 2],
+  ["Honolulu", 21.3069, -157.8583, 2], ["Lisbon", 38.7223, -9.1393, 2], ["Madrid", 40.4168, -3.7038, 2], ["Rome", 41.9028, 12.4964, 2],
+  ["Berlin", 52.52, 13.405, 2], ["Reykjavík", 64.1466, -21.9426, 2], ["Istanbul", 41.0082, 28.9784, 2], ["Dubai", 25.2048, 55.2708, 2],
+  ["Delhi", 28.6139, 77.209, 2], ["Bangkok", 13.7563, 100.5018, 2], ["Singapore", 1.3521, 103.8198, 2], ["Seoul", 37.5665, 126.978, 2],
+  ["Shanghai", 31.2304, 121.4737, 2], ["Hong Kong", 22.3193, 114.1694, 2], ["Cape Town", -33.9249, 18.4241, 2], ["Buenos Aires", -34.6037, -58.3816, 2],
+  ["Lima", -12.0464, -77.0428, 2], ["Porto", 41.1579, -8.6291, 2], ["Kyoto", 35.0116, 135.7681, 2],
+  ["Oakland", 37.8044, -122.2712, 3], ["San Jose", 37.3382, -121.8863, 3], ["Santa Cruz", 36.9741, -122.0308, 3], ["Monterey", 36.6002, -121.8947, 3],
+  ["Salinas", 36.6777, -121.6555, 3], ["Sacramento", 38.5816, -121.4944, 3], ["Fresno", 36.7378, -119.7871, 3], ["San Luis Obispo", 35.2828, -120.6596, 3],
+  ["Sintra", 38.8029, -9.3817, 3], ["Cascais", 38.6979, -9.4215, 3], ["Setúbal", 38.5244, -8.8882, 3],
+  ["Keflavík", 64.0049, -22.5624, 3], ["Selfoss", 63.9331, -21.0003, 3], ["Vík", 63.4186, -19.006, 3], ["Höfn", 64.2539, -15.2082, 3],
+  ["Borgarnes", 64.5383, -21.9206, 3], ["Akureyri", 65.6885, -18.1262, 3],
+  ["Carmel", 36.5552, -121.9233, 4], ["Big Sur", 36.2704, -121.8081, 4], ["Almada", 38.679, -9.1569, 4],
+  ["Grundarfjörður", 64.9242, -23.2614, 4], ["Hella", 63.8358, -20.4, 4],
+];
+const LABEL_ZOOM = { 1: 0, 2: 3, 3: 14, 4: 40 };
+const NAME = { maya: "Maya", theo: "Theo" };
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const YEARS = [2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026];
+
+// ---------------------------------------------------------------- scoring (PRD starting values)
+const FULL_KM = 1, ZERO_KM = 500, WHERE_MAX = 100, YEAR_PTS = 40, MONTH_PTS = 30, DAY_PTS = 30;
+function whereScore(km) {
+  if (km <= FULL_KM) return WHERE_MAX;
+  if (km >= ZERO_KM) return 0;
+  return Math.round(WHERE_MAX * (1 - Math.log(km / FULL_KM) / Math.log(ZERO_KM / FULL_KM)));
+}
+function whenScore(g, a) {
+  const y = g.y === a.y, m = y && g.m === a.m, d = m && g.d === a.d;
+  return { y, m, d, pts: (y ? YEAR_PTS : 0) + (m ? MONTH_PTS : 0) + (d ? DAY_PTS : 0) };
+}
+function km(a, b) {
+  const R = 6371.0088, r = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * r, dLon = (b.lon - a.lon) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// ---------------------------------------------------------------- dates (local to the photo)
+function parts(t) { const [d, hm] = t.split("T"); const [y, m, dd] = d.split("-").map(Number); const [hh, mi] = hm.split(":").map(Number); return { y, m: m - 1, d: dd, hh, mi }; }
+const weekday = (y, m, d) => new Date(Date.UTC(y, m, d)).getUTCDay();
+const daysIn = (y, m) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+const fmtDate = (p) => `${DAYS[weekday(p.y, p.m, p.d)]}, ${MONTHS[p.m]} ${p.d}, ${p.y}`;
+const fmtTime = (p) => `${((p.hh + 11) % 12) + 1}:${String(p.mi).padStart(2, "0")} ${p.hh < 12 ? "am" : "pm"}`;
+function fmtRange(s, e) {
+  const a = parts(s + "T00:00"), b = parts(e + "T00:00");
+  if (s === e) return `${MONTHS[a.m]} ${a.d}, ${a.y}`;
+  if (a.m === b.m) return `${MONTHS[a.m]} ${a.d}–${b.d}, ${a.y}`;
+  return `${MONTHS[a.m]} ${a.d} – ${MONTHS[b.m]} ${b.d}, ${b.y}`;
+}
+const tripDays = (t) => Math.round((Date.parse(t.end) - Date.parse(t.start)) / 864e5) + 1;
+const fmtKm = (k) => k < 10 ? k.toFixed(1) : Math.round(k).toLocaleString("en-US");
+
+// ---------------------------------------------------------------- map
+const X = (lon) => (lon + 180) / 360 * 1000;
+const Y = (lat) => { const r = Math.max(-85, Math.min(85, lat)) * Math.PI / 180; return (1 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / Math.PI) / 2 * 1000; };
+const LON = (x) => x / 1000 * 360 - 180;
+const LAT = (y) => Math.atan(Math.sinh(Math.PI * (1 - 2 * y / 1000))) * 180 / Math.PI;
+const PIN_D = "M0,0C-2,-6 -9,-10.5 -9,-17A9,9 0 1 1 9,-17C9,-10.5 2,-6 0,0Z";
+const PLACES_XY = PLACES.map(([n, lat, lon, r]) => ({ n, r, x: X(lon), y: Y(lat) }));
+
+class QuizMap {
+  constructor() {
+    this.root = document.createElement("div");
+    this.root.className = "map";
+    this.root.innerHTML = `<svg aria-label="Map. Scroll or pinch to zoom, drag to pan, tap to drop your pin."><rect class="water" width="100%" height="100%"/><g class="geo"><path class="land"/><path class="states"/><path class="borders"/></g><g class="labels"></g><line class="link"/><g class="pins"></g></svg>
+      <div class="map-ctl"><button type="button" data-z="in" aria-label="Zoom in">+</button><button type="button" data-z="out" aria-label="Zoom out">−</button><button type="button" data-z="world" aria-label="Show the whole world">World</button></div>
+      <div class="scale" aria-hidden="true"><span class="scale-bar"></span><span class="scale-txt"></span></div>
+      <div class="map-msg" hidden></div>`;
+    this.svg = d3.select(this.root.querySelector("svg"));
+    this.geo = this.svg.select(".geo");
+    this.link = this.svg.select(".link").style("display", "none");
+    this.bounds = [0, 112, 1000, 699];
+    this.view = { cx: X(-35), cy: Y(32), z: 1.15 };
+    this.t = d3.zoomIdentity;
+    this.w = this.h = 0;
+    this.pins = { guess: null, truth: null };
+    this.pickable = false;
+    this.onPick = null;
+    this.zoom = d3.zoom().clickDistance(6).on("zoom", (e) => this.onZoom(e.transform));
+    this.svg.call(this.zoom).on("dblclick.zoom", null);
+    this.svg.on("click", (e) => {
+      if (!this.pickable || !this.w) return;
+      const [mx, my] = this.t.invert(d3.pointer(e));
+      const pt = { lat: LAT(my), lon: LON(mx) };
+      this.pins.guess = pt;
+      this.draw(true);
+      this.onPick && this.onPick(pt);
+    });
+    this.root.querySelector(".map-ctl").addEventListener("click", (e) => {
+      const z = e.target.closest("button")?.dataset.z;
+      if (!z) return;
+      if (z === "world") this.go({ cx: X(-35), cy: Y(32), z: 1 }, true);
+      else this.svg.transition().duration(250).call(this.zoom.scaleBy, z === "in" ? 2.5 : 0.4);
+    });
+    new ResizeObserver(() => this.resize()).observe(this.root);
+  }
+  setData(d) {
+    this.bounds = d.bounds;
+    this.geo.select(".land").attr("d", d.land);
+    this.geo.select(".states").attr("d", d.states);
+    this.geo.select(".borders").attr("d", d.borders);
+  }
+  message(text) { const m = this.root.querySelector(".map-msg"); m.hidden = !text; m.textContent = text || ""; }
+  attach(slot) { slot.appendChild(this.root); this.resize(true); this.draw(false); }
+  resize(force) {
+    const w = this.root.clientWidth, h = this.root.clientHeight;
+    if (!w || !h || (!force && w === this.w && h === this.h)) return;
+    const keep = this.view;
+    this.w = w; this.h = h; this.k0 = w / 1000;
+    const [x0, y0, x1, y1] = this.bounds;
+    this.zoom.extent([[0, 0], [w, h]]).scaleExtent([this.k0, this.k0 * 2500]).translateExtent([[x0, y0], [x1, y1]]);
+    this.go(keep, false);
+  }
+  go(v, animate) {
+    if (!this.w) { this.view = v; return; }
+    const k = v.z * this.k0;
+    const t = d3.zoomIdentity.translate(this.w / 2 - k * v.cx, this.h / 2 - k * v.cy).scale(k);
+    (animate ? this.svg.transition().duration(750).ease(d3.easeCubicInOut) : this.svg).call(this.zoom.transform, t);
+  }
+  fit(points, maxZ) {
+    const xs = points.map((p) => X(p.lon)), ys = points.map((p) => Y(p.lat));
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const dx = Math.max(...xs) - Math.min(...xs), dy = Math.max(...ys) - Math.min(...ys);
+    const zFit = Math.min(this.w / (dx * this.k0 || 1e-9), this.h / (dy * this.k0 || 1e-9)) * 0.62;
+    this.go({ cx, cy: cy - 8 / (this.k0 * Math.min(zFit, maxZ)), z: Math.max(1, Math.min(zFit, maxZ)) }, true);
+  }
+  onZoom(t) {
+    this.t = t;
+    this.geo.attr("transform", t);
+    if (this.w) this.view = { cx: (this.w / 2 - t.x) / t.k, cy: (this.h / 2 - t.y) / t.k, z: t.k / this.k0 };
+    this.draw(false);
+  }
+  draw(dropped) {
+    const t = this.t, z = this.view.z, pad = 40;
+    const vis = PLACES_XY.filter((p) => z >= LABEL_ZOOM[p.r]).map((p) => ({ ...p, sx: t.applyX(p.x), sy: t.applyY(p.y) }))
+      .filter((p) => p.sx > -pad && p.sx < this.w + pad && p.sy > -pad && p.sy < this.h + pad);
+    this.svg.select(".labels").selectAll("g").data(vis, (d) => d.n).join((en) => {
+      const g = en.append("g").attr("class", (d) => "lbl r" + d.r);
+      g.append("circle").attr("r", 2.2);
+      g.append("text").attr("x", 5).attr("y", 3.5).text((d) => d.n);
+      return g;
+    }).attr("transform", (d) => `translate(${d.sx},${d.sy})`);
+    const pins = ["guess", "truth"].filter((k) => this.pins[k]).map((k) => ({ k, sx: t.applyX(X(this.pins[k].lon)), sy: t.applyY(Y(this.pins[k].lat)) }));
+    this.svg.select(".pins").selectAll("g.pin").data(pins, (d) => d.k).join((en) => {
+      const g = en.append("g").attr("class", (d) => "pin " + d.k);
+      g.append("g").attr("class", "drop").call((dg) => { dg.append("path").attr("d", PIN_D); dg.append("circle").attr("cy", -17).attr("r", 3.4); });
+      return g;
+    }).attr("transform", (d) => `translate(${d.sx},${d.sy})`);
+    if (dropped) {
+      const node = this.svg.select(".pin.guess .drop").node();
+      if (node) { node.classList.remove("drop"); void node.getBoundingClientRect(); node.classList.add("drop"); }
+    }
+    if (pins.length === 2) this.link.style("display", null).attr("x1", pins[0].sx).attr("y1", pins[0].sy).attr("x2", pins[1].sx).attr("y2", pins[1].sy);
+    else this.link.style("display", "none");
+    this.drawScale();
+  }
+  drawScale() {
+    if (!this.w) return;
+    const lat = LAT(this.view.cy), kmPerPx = 40075 * Math.cos(lat * Math.PI / 180) / (1000 * this.t.k);
+    const target = kmPerPx * 70, pow = 10 ** Math.floor(Math.log10(target));
+    const nice = [1, 2, 5, 10].map((m) => m * pow).filter((v) => v <= target).pop() || pow;
+    this.root.querySelector(".scale-bar").style.width = (nice / kmPerPx) + "px";
+    this.root.querySelector(".scale-txt").textContent = nice >= 1 ? `${nice.toLocaleString("en-US")} km` : `${Math.round(nice * 1000)} m`;
+  }
+}
+const map = new QuizMap();
+map.message("Loading the map…");
+fetch("map.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+  .then((d) => { map.setData(d); map.message(""); map.resize(true); })
+  .catch(() => map.message("The map didn't load. Reload the page to try again."));
+
+// ---------------------------------------------------------------- state
+const fresh = () => ({ screen: "home", round: 0, i: 0, stage: "where", whenStep: "y", guess: null, date: {}, results: [], played: {}, streak: 6, veto: 0, sent: null, lightbox: false });
+let S = fresh();
+const app = document.getElementById("app");
+const tripOf = (id) => TRIPS.find((t) => t.id === id);
+const curId = () => ROUND_ORDER[S.round];
+const cur = () => ROUNDS[curId()];
+const photo = () => cur().photos[S.i];
+const img = (f) => `photos/${f}.jpg`;
+const roundScore = () => S.results.reduce((s, r) => s + r.where + r.when.pts, 0);
+
+const ICON_X = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>`;
+const ICON_EXPAND = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5l-4.5 4.5M2.5 13.5l4.5-4.5"/></svg>`;
+
+function statusBar() {
+  return `<div class="status" aria-hidden="true"><span>9:41</span><span class="island"></span><span class="bars"><i style="height:4px"></i><i style="height:6px"></i><i style="height:8px"></i><i style="height:11px"></i></span></div>`;
+}
+
+function render() {
+  const screens = { home: homeView, play: playView, summary: summaryView, send: sendView, sent: sentView };
+  app.innerHTML = statusBar() + `<div class="screen">${screens[S.screen]()}</div>` +
+    (S.lightbox ? `<button class="lightbox" type="button" data-act="closebox" aria-label="Close photo"><img src="${img(S.lightbox)}" alt=""></button>` : "");
+  const slot = app.querySelector(".map-slot");
+  if (slot) map.attach(slot);
+}
+
+// ---------------------------------------------------------------- home
+function homeView() {
+  const left = ROUND_ORDER.findIndex((id) => !S.played[id]);
+  const total = TRIPS.length;
+  const today = left === -1
+    ? `<div class="today"><p class="eyebrow">That's every round in this demo</p><p>In the app a new one arrives each day: one photo from Theo, one from you.</p><button class="btn quiet block" type="button" data-act="reset">Start over</button></div>`
+    : `<div class="today"><p class="eyebrow">${left === 0 ? "Today's round" : "Another round"}</p><p>Theo approved 5 photos from one of your trips. Where and when was each one taken?</p><button class="btn primary block" type="button" data-act="play" data-round="${left}">Play</button></div>`;
+  const rows = TRIPS.map((t) => {
+    const done = S.played[t.id];
+    return `<li class="trip"><b>${t.place}</b>${done ? `<span class="score">${done} pts</span>` : ""}<span class="dates">${fmtRange(t.start, t.end)}${tripDays(t) > 1 ? ` · ${tripDays(t)} days` : " · day trip"}</span><span class="meta">${t.maya + t.theo} photos · ${t.hours} hours you were both there</span></li>`;
+  }).join("");
+  return `<div class="scroll"><div class="home">
+    <div class="pair"><div class="avatars"><span class="av m">M</span><span class="av t">T</span></div><div class="pair-txt"><b>Maya &amp; Theo</b><span>Paired</span></div><span class="streak">Streak ${S.streak} days</span></div>
+    <div><p class="big">${total} trips together</p><p class="big-sub">Found in both of your photo libraries, Nov 2022 to now.</p></div>
+    ${today}
+    <div><h2 class="list-h">Your trips <span>newest first</span></h2><ul class="trips">${rows}</ul></div>
+    <p class="oldhome"><b>2 old-home days.</b> Ordinary Sundays in Oakland, where you used to live. They show up in a round now and then.</p>
+  </div></div>`;
+}
+
+// ---------------------------------------------------------------- play
+function playView() {
+  const p = photo(), done = S.results.length;
+  const segs = cur().photos.map((_, k) => `<i class="${k < done ? "done" : k === S.i ? "now" : ""}"></i>`).join("");
+  const bar = `<div class="bar"><button class="icon-btn" type="button" data-act="home" aria-label="Leave round">${ICON_X}</button>
+    <div class="progress"><small>Photo ${S.i + 1} of 5</small><div class="segs">${segs}</div></div>
+    <div class="tally"><span class="mono">${roundScore()}</span><small>points</small></div></div>`;
+  const shot = `<figure class="shot${S.stage === "reveal" ? " small" : ""}" style="margin-block:0"><img src="${img(p.f)}" alt="${S.stage === "reveal" ? p.name : "A photo from the trip"}"><figcaption class="owner">${p.by === "theo" ? "Theo's photo" : "Your photo"}</figcaption><button class="expand" type="button" data-act="openbox" aria-label="View the photo larger">${ICON_EXPAND}</button></figure>`;
+  if (S.stage === "where") {
+    return bar + shot + `<div class="stage"><div class="stage-h"><h2>Where was this?</h2><p>Zoom in, then tap the spot</p></div><div class="map-slot"></div></div>
+      <div class="actions"><button class="btn primary block" type="button" data-act="towhen" ${S.guess ? "" : "disabled"}>${S.guess ? "Next: when" : "Drop a pin first"}</button></div>`;
+  }
+  if (S.stage === "when") return bar + shot + `<div class="stage">${whenPicker()}</div>
+      <div class="actions"><button class="btn primary block" type="button" data-act="reveal" ${S.date.d ? "" : "disabled"}>Reveal</button></div>`;
+  return bar + shot + revealPanel();
+}
+
+function whenPicker() {
+  const D = S.date, st = S.whenStep;
+  const crumb = (k, label, val, enabled) => `<button class="crumb${st === k ? " on" : ""}" type="button" data-act="step" data-step="${k}" ${enabled ? "" : "disabled"}><small>${label}</small><b>${val ?? "–"}</b></button>`;
+  let grid;
+  if (st === "y") grid = `<div class="pick years">${YEARS.map((y) => `<button type="button" data-act="pick" data-y="${y}" class="${D.y === y ? "sel" : ""}">${y}</button>`).join("")}</div>`;
+  else if (st === "m") grid = `<div class="pick months">${MONTHS.map((m, k) => `<button type="button" data-act="pick" data-m="${k}" class="${D.m === k ? "sel" : ""}">${m}</button>`).join("")}</div>`;
+  else {
+    const first = weekday(D.y, D.m, 1), n = daysIn(D.y, D.m);
+    const cells = DAYS.map((d) => `<span class="wd">${d[0]}</span>`).join("") + Array.from({ length: first }, () => "<span></span>").join("") +
+      Array.from({ length: n }, (_, k) => `<button type="button" data-act="pick" data-d="${k + 1}" class="${D.d === k + 1 ? "sel" : ""}">${k + 1}</button>`).join("");
+    grid = `<div class="pick days">${cells}</div>`;
+  }
+  const q = { y: "Which year?", m: "Which month?", d: `Which day in ${MONTHS[D.m]} ${D.y}?` }[st];
+  return `<div class="stage-h"><h2>When was this?</h2><button class="btn link" type="button" data-act="towhere">Move pin</button></div>
+    <div class="when"><div class="crumbs">${crumb("y", "Year", D.y, true)}${crumb("m", "Month", D.m != null ? MONTHS[D.m] : null, D.y != null)}${crumb("d", "Day", D.d, D.m != null)}</div>
+    <p class="when-q">${q}</p>${grid}</div>`;
+}
+
+function revealPanel() {
+  const p = photo(), r = S.results[S.i], a = parts(p.t), t = tripOf(curId());
+  const g = r.date;
+  const chk = (ok, label) => `<span class="chk ${ok ? "ok" : "no"}">${ok ? "✓" : "✗"} ${label}</span>`;
+  const last = S.i === 4;
+  return `<div class="stage reveal">
+    <div class="legend"><span><i class="g"></i>Your pin</span><span><i class="t"></i>Where ${p.by === "theo" ? "Theo" : "you"} took it</span></div>
+    <div class="map-slot"></div>
+    <div class="result">
+      <div class="res-head"><div><h3>${p.name}</h3><p>${p.area}</p></div><div class="res-pts">+${r.where + r.when.pts}<small>of 200</small></div></div>
+      <dl class="rows">
+        <div class="row"><dt>Where</dt><dd><span class="mono">${fmtKm(r.km)} km</span> from the spot</dd><dd class="pts">+${r.where}</dd></div>
+        <div class="row"><dt>When</dt><dd>${fmtDate(a)}<br><span class="mono" style="font-size:12.5px;color:var(--ink-2)">${fmtTime(a)} ${cur().tz}</span>
+          <div class="checks">${chk(r.when.y, g.y)}${chk(r.when.m, MONTHS[g.m])}${chk(r.when.d, g.d)}</div></dd><dd class="pts">+${r.when.pts}</dd></div>
+      </dl>
+      <p class="from">From your trip: <b>${t.place}</b>, ${fmtRange(t.start, t.end)}</p>
+    </div>
+  </div>
+  <div class="actions"><button class="btn primary block" type="button" data-act="next">${last ? "See your score" : "Next photo"}</button></div>`;
+}
+
+// ---------------------------------------------------------------- summary, veto, sent
+function summaryView() {
+  const t = tripOf(curId()), total = roundScore();
+  const rows = cur().photos.map((p, k) => {
+    const r = S.results[k], a = parts(p.t);
+    return `<li><img src="${img(p.f)}" alt=""><span><b>${p.name}</b><small>${fmtKm(r.km)} km · ${MONTHS[a.m]} ${a.d} ${r.when.d ? "✓" : "✗"}</small></span><span class="p">${r.where + r.when.pts}</span></li>`;
+  }).join("");
+  return `<div class="scroll"><div class="sum">
+    <div><p class="eyebrow" style="margin:6px 0 6px">${t.place} · ${fmtRange(t.start, t.end)}</p><div class="sum-score"><b>${total}</b><span>of 1,000</span></div></div>
+    <ul class="sum-list">${rows}</ul>
+    <p class="note">Send Theo one of your photos from this trip to keep the streak. You see each one before it goes, and nothing is sent until you choose.</p>
+  </div></div>
+  <div class="actions"><button class="btn primary block" type="button" data-act="send">Pick a photo for Theo</button><button class="btn link block" type="button" data-act="home">Back to trips</button></div>`;
+}
+
+function sendView() {
+  const ex = cur().extras;
+  if (S.veto >= ex.length) {
+    return `<div class="sent"><h2>Nothing sent</h2><p>You skipped all three. Theo gets no photo from you today, and the streak waits until you pick one.</p></div>
+      <div class="actions" style="margin-top:auto"><button class="btn quiet block" type="button" data-act="vetoagain">Look again</button><button class="btn link block" type="button" data-act="home">Back to trips</button></div>`;
+  }
+  const f = ex[S.veto];
+  return `<div class="veto"><div><p class="veto-count">${S.veto + 1} of ${ex.length} from your library</p><h2>Send this one to Theo?</h2></div>
+    <p>Only the photo you approve leaves your phone. Skipped ones stay put.</p>
+    <figure class="shot" style="margin:0"><img src="${img(f)}" alt="${EXTRA_NAMES[f]}"><button class="expand" type="button" data-act="openbox" data-f="${f}" aria-label="View the photo larger">${ICON_EXPAND}</button></figure>
+  </div>
+  <div class="actions"><div class="veto-actions"><button class="btn quiet" type="button" data-act="skip">Skip</button><button class="btn primary" type="button" data-act="approve">Send to Theo</button></div></div>`;
+}
+
+function sentView() {
+  return `<div class="scroll"><div class="sent"><p class="eyebrow" style="margin:0">Sent</p><h2>Theo gets it tomorrow</h2><img src="${img(S.sent)}" alt="The photo sent to Theo"><p>Streak: <b class="mono" style="color:var(--ink)">${S.streak} days</b>. If Theo answers yours too, it keeps going.</p></div></div>
+    <div class="actions"><button class="btn primary block" type="button" data-act="home">Back to trips</button></div>`;
+}
+
+// ---------------------------------------------------------------- actions
+function setupMapFor(stage) {
+  map.pickable = stage === "where";
+  map.root.classList.toggle("locked", !map.pickable);
+  map.pins = { guess: S.guess, truth: stage === "reveal" ? photo() : null };
+  map.onPick = (pt) => { const first = !S.guess; S.guess = pt; if (first) { const b = app.querySelector('[data-act="towhen"]'); b.disabled = false; b.textContent = "Next: when"; } };
+}
+
+app.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-act]");
+  if (!el || el.disabled) return;
+  const act = el.dataset.act;
+  if (act === "play") {
+    S.round = +el.dataset.round; S.i = 0; S.results = []; S.screen = "play"; resetPhoto();
+    map.view = { cx: X(-35), cy: Y(32), z: 1.15 };
+  } else if (act === "home") { S.screen = "home"; }
+  else if (act === "reset") { S = fresh(); }
+  else if (act === "towhen") { S.stage = "when"; }
+  else if (act === "towhere") { S.stage = "where"; }
+  else if (act === "step") { S.whenStep = el.dataset.step; }
+  else if (act === "pick") {
+    const d = el.dataset;
+    if (d.y) { S.date = { y: +d.y }; S.whenStep = "m"; }
+    else if (d.m) { S.date = { y: S.date.y, m: +d.m }; S.whenStep = "d"; }
+    else { S.date.d = +d.d; }
+  } else if (act === "reveal") {
+    const p = photo(), a = parts(p.t), k = km(S.guess, p);
+    S.results[S.i] = { km: k, where: whereScore(k), when: whenScore(S.date, a), date: { ...S.date } };
+    S.stage = "reveal";
+  } else if (act === "next") {
+    if (S.i === 4) { S.screen = "summary"; S.played[curId()] = roundScore(); }
+    else { S.i++; resetPhoto(); }
+  } else if (act === "send") { S.screen = "send"; S.veto = 0; }
+  else if (act === "skip") { S.veto++; }
+  else if (act === "vetoagain") { S.veto = 0; }
+  else if (act === "approve") { S.sent = cur().extras[S.veto]; S.streak++; S.screen = "sent"; }
+  else if (act === "openbox") { S.lightbox = el.dataset.f || photo().f; }
+  else if (act === "closebox") { S.lightbox = false; }
+  else return;
+  if (S.screen === "play") setupMapFor(S.stage);
+  render();
+  if (S.screen === "play" && S.stage === "reveal" && act === "reveal") map.fit([S.guess, photo()], 400);
+});
+function resetPhoto() { S.stage = "where"; S.whenStep = "y"; S.guess = null; S.date = {}; }
+
+// ---------------------------------------------------------------- the explainer diagram
+function drawDiagram() {
+  const svg = document.getElementById("diagram"), NS = "http://www.w3.org/2000/svg";
+  const x0 = 50, pxh = 3, laneY = { maya: 42, theo: 96 };
+  const hx = (day, h) => x0 + ((day - 10) * 24 + h) * pxh;
+  const el = (tag, attrs, text) => { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (text) n.textContent = text; svg.appendChild(n); return n; };
+  const matched = { 12: [13, 14, 15, 17, 18], 13: [9, 10, 11, 13, 14, 16, 19, 20], 14: [10, 11, 12, 14, 15, 16] };
+  const solo = {
+    maya: { 10: [8, 19], 11: [12, 19], 12: [16], 13: [12, 17], 14: [9], 15: [19], 16: [12] },
+    theo: { 10: [21], 11: [8, 19], 12: [19, 21], 13: [8, 21], 14: [13, 17], 15: [8], 16: [18, 20] },
+  };
+  const away = (d, h) => (d === 12 && h >= 12) || d === 13 || (d === 14 && h <= 18);
+  el("rect", { class: "d-trip", x: hx(12, 12), y: 26, width: hx(14, 18) - hx(12, 12), height: 92, rx: 6 });
+  for (let d = 10; d <= 16; d++) {
+    el("text", { class: "d-day", x: hx(d, 2), y: 14 }, `${DAYS[weekday(2024, 6, d)]} ${d}`);
+    if (d > 10) el("line", { class: "d-axis", x1: hx(d, 0), x2: hx(d, 0), y1: 20, y2: 122 });
+  }
+  for (const who of ["maya", "theo"]) {
+    el("text", { class: "d-lane", x: 0, y: laneY[who] + 4 }, NAME[who]);
+    el("line", { class: "d-axis", x1: x0, x2: hx(17, 0), y1: laneY[who], y2: laneY[who] });
+    for (const d in solo[who]) for (const h of solo[who][d]) el("rect", { class: away(+d, h) ? "d-away" : "d-home", x: hx(+d, h) - 1, y: laneY[who] - 7, width: 2, height: 14, rx: 1 });
+  }
+  for (const d in matched) for (const h of matched[d]) {
+    el("line", { class: "d-link", x1: hx(+d, h), x2: hx(+d, h), y1: laneY.maya + 7, y2: laneY.theo - 7 });
+    for (const who of ["maya", "theo"]) el("rect", { class: "d-match", x: hx(+d, h) - 1.25, y: laneY[who] - 8, width: 2.5, height: 16, rx: 1 });
+  }
+  el("line", { class: "d-link ignored", x1: hx(11, 19), x2: hx(11, 19), y1: laneY.maya + 7, y2: laneY.theo - 7 });
+  el("text", { class: "d-note", x: hx(11, 19) - 4, y: 72, "text-anchor": "end" }, "at home: ignored");
+  const bx0 = hx(12, 13), bx1 = hx(14, 16);
+  el("path", { class: "d-brace", d: `M${bx0},128v6H${bx1}v-6` });
+  el("text", { class: "d-tripl", x: (bx0 + bx1) / 2, y: 150, "text-anchor": "middle" }, "Trip found: Jul 12–14 · 19 shared hours");
+}
+
+function fillCredits() {
+  const names = {};
+  for (const id in ROUNDS) for (const p of ROUNDS[id].photos) names[p.f] = p.name;
+  document.getElementById("credits").innerHTML = Object.entries(CREDITS).map(([f, [who, lic, licUrl, page]]) =>
+    `<li><a href="${page}" target="_blank" rel="noopener">${names[f] || EXTRA_NAMES[f]}</a>, ${who}, <a href="${licUrl}" target="_blank" rel="noopener">${lic}</a></li>`).join("");
+}
+
+// ---------------------------------------------------------------- boot
+function start(data) {
+  if (data && data.S) S = data.S;
+  if (data && data.view) map.view = data.view;
+  drawDiagram();
+  fillCredits();
+  if (S.screen === "play") setupMapFor(S.stage);
+  render();
+}
+window.claude?.hot?.snapshot?.(() => ({ S, view: map.view }));
+window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
+</script>
+</body>
+</html>

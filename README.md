@@ -7,6 +7,9 @@ photos: where and when was this?
 **Status:** phase 1, a Python spike that checks trip detection against real libraries. There is no
 app yet. Plan and gates: [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
+**[Play the demo](https://shaoyinz.github.io/PairedPhotoTrivia/)**: one round with a made-up couple,
+in the browser. Source in [`demo/`](demo/).
+
 ## How trips are found
 
 - Each phone puts its photos into cells about 1 km wide and 1 hour long (geohash-6 × UTC hour),
@@ -27,6 +30,7 @@ Full spec: [`docs/PRD.md`](docs/PRD.md).
 | `docs/` | Product spec, implementation plan, one file per phase-1 step in `docs/plan/` |
 | `spike/` | Python trip-detection spike: filters, buckets, matching, home/work, trips, evaluation |
 | `ios/MetadataExport/` | Throwaway iOS app that exports Photos metadata (never pixels) to CSV |
+| `demo/` | Static web demo, deployed to GitHub Pages on push |
 | `data/` | Local exports and results; gitignored, never committed |
 
 ## Run the spike
@@ -42,4 +46,5 @@ make skeleton DATA=/tmp/pq-synth   # the whole pipeline on synthetic data
 
 ## License
 
-[MIT](LICENSE)
+Code: [MIT](LICENSE). The demo's photos keep their own Wikimedia Commons licenses; see
+[`demo/README.md`](demo/README.md).

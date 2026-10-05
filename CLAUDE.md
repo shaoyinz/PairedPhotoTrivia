@@ -41,6 +41,7 @@ and a remote partner may have no Mac. See `docs/IMPLEMENTATION_PLAN.md`.
 - `spike/`: Python trip-detection spike
 - `data/`: local metadata exports (gitignored)
 - `ios/`: SwiftUI app (phase 2+)
+- `demo/`: static web demo with a made-up couple, deployed to GitHub Pages by `.github/workflows/pages.yml`. Its photos are Commons-licensed, not MIT (credits in `demo/README.md`)
 
 ## Spike stack
 
