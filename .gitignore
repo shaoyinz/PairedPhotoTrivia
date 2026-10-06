@@ -11,3 +11,6 @@ anchors_*.toml
 # Xcode per-user state and build output
 xcuserdata/
 DerivedData/
+# working notes: docs/ is its own private repo; only the product spec is public
+docs/*
+!docs/PRD.md

@@ -1,6 +1,6 @@
 # ios/
 
-## `MetadataExport/` — throwaway PhotoKit → CSV exporter ([§1.2a](../docs/plan/1.2-export.md))
+## `MetadataExport/` — throwaway PhotoKit → CSV exporter (§1.2a)
 
 One screen: grant Photos access, tap **Export metadata**, then share the CSV (AirDrop it to the
 Mac). It reads metadata only — never image data — so photos stored only in iCloud export too.

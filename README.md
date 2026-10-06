@@ -5,7 +5,7 @@ and location across both partners' photo libraries, then quizzes each partner on
 photos: where and when was this?
 
 **Status:** phase 1, a Python spike that checks trip detection against real libraries. There is no
-app yet. Plan and gates: [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
+app yet.
 
 **[Play the demo](https://shaoyinz.github.io/PairedPhotoTrivia/)**: one round with a made-up couple,
 in the browser. Source in [`demo/`](demo/).
@@ -27,7 +27,7 @@ Full spec: [`docs/PRD.md`](docs/PRD.md).
 
 | Path | What's there |
 | --- | --- |
-| `docs/` | Product spec, implementation plan, one file per phase-1 step in `docs/plan/` |
+| `docs/` | Product spec |
 | `spike/` | Python trip-detection spike: filters, buckets, matching, home/work, trips, evaluation |
 | `ios/MetadataExport/` | Throwaway iOS app that exports Photos metadata (never pixels) to CSV |
 | `demo/` | Static web demo, deployed to GitHub Pages on push |

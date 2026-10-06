@@ -35,9 +35,9 @@ and a remote partner may have no Mac. See `docs/IMPLEMENTATION_PLAN.md`.
 
 ## Repo layout (planned)
 
-- `docs/PRD.md`: product spec
-- `docs/IMPLEMENTATION_PLAN.md`: phase framing, gates, risks — the entry point
-- `docs/plan/1.N-*.md`: one file per executable phase-1 step
+- `docs/PRD.md`: product spec (public)
+- `docs/IMPLEMENTATION_PLAN.md`: phase framing, gates, risks — the entry point (private)
+- `docs/plan/1.N-*.md`: one file per executable phase-1 step (private)
 - `spike/`: Python trip-detection spike
 - `data/`: local metadata exports (gitignored)
 - `ios/`: SwiftUI app (phase 2+)
@@ -53,3 +53,4 @@ and a remote partner may have no Mac. See `docs/IMPLEMENTATION_PLAN.md`.
 
 - Keep the core matching and clustering logic in plain, pure functions with tests. It will be ported to Swift, so avoid pandas-only tricks inside the algorithm.
 - Git: commit straight to `main`, with no feature branches or PRs, until the app ships as a product. Revisit this before release.
+- Working notes are private: `docs/` is its own git repo (private remote `PairedPhotoTrivia-notes`), ignored by this public one except `docs/PRD.md`. Commit plan changes with `git -C docs`; commit PRD changes here.

@@ -1,7 +1,7 @@
 import Photos
 import SwiftUI
 
-/// Throwaway phase-1 exporter (docs/plan/1.2-export.md §1.2a): one screen, one button, one share sheet.
+/// Throwaway phase-1 exporter (§1.2a): one screen, one button, one share sheet.
 @main
 struct MetadataExportApp: App {
     var body: some Scene {
