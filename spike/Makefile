@@ -4,7 +4,7 @@
 DATA ?= ../data
 PQ := uv run photoquiz
 
-.PHONY: skeleton test
+.PHONY: skeleton test vectors
 skeleton:
 	$(PQ) synth --out $(DATA)
 	$(PQ) ingest -p a --data $(DATA)
@@ -23,3 +23,8 @@ skeleton:
 
 test:
 	uv run pytest -q
+
+# §1.9: rewrite tests/vectors/*.json, the cases the Swift port asserts. Rerun after any change in
+# behavior or in a default (test_vectors.py fails until then), and commit the diff.
+vectors:
+	uv run python tests/vectorgen.py

@@ -3,7 +3,7 @@ import math
 import pytest
 
 from photoquiz.models import LatLon
-from photoquiz.project import to_km
+from photoquiz.project import KM_PER_DEG_LAT, distance_km, to_km
 
 
 def haversine_km(a: LatLon, b: LatLon) -> float:
@@ -28,3 +28,10 @@ def test_commute_scale_error_under_half_a_percent():
 def test_antimeridian_takes_the_short_way():
     x, _ = to_km(LatLon(0.0, -179.99), LatLon(0.0, 179.99))
     assert x == pytest.approx(0.02 * 111.320, rel=1e-6)
+
+
+def test_distance_is_the_plane_length_from_a():
+    a = LatLon(37.76, -122.44)
+    assert distance_km(a, a) == 0.0
+    assert distance_km(a, LatLon(38.76, -122.44)) == pytest.approx(KM_PER_DEG_LAT)
+    assert distance_km(LatLon(0.0, 179.99), LatLon(0.0, -179.99)) == pytest.approx(0.02 * 111.320, rel=1e-6)

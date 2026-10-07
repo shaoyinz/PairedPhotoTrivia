@@ -48,3 +48,11 @@ def test_row_round_trip_with_missing_values():
 def test_parse_row_rejects_wrong_field_count():
     with pytest.raises(SchemaError):
         parse_row(["X-1", "1700000000"])
+
+
+@pytest.mark.parametrize(("column", "value"), [("asset_id", ""), ("is_screenshot", "yes"), ("is_burst_pick", "2")])
+def test_parse_row_rejects_a_bad_cell(column, value):
+    row = format_row(PhotoMeta("X-1", 1_700_000_000, -25200, None, None, True, None, False, None, None, 1179, 2556))
+    row[CSV_COLUMNS.index(column)] = value
+    with pytest.raises(SchemaError):
+        parse_row(row)

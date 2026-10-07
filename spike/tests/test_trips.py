@@ -398,6 +398,35 @@ def test_backfill_reaches_what_one_partner_shot_alone():
     assert (w.photo_count_a, w.photo_count_b) == (2, 3)
 
 
+# GPS on one side only: matching needs a located photo from each of you
+
+
+def found(ps_a, ps_b):
+    """§1.4 then §1.7, as `trips` runs them: A expanded, B raw, salted, intersected, mapped back."""
+    own_a = own_keys(ps_a, expanded=True)
+    m = match(salted_set(own_a, SALT), salted_set(own_keys(ps_b, expanded=False), SALT))
+    return assemble(sorted(matched_keys(own_a, m, SALT)), *SHARED, ps_a=ps_a, ps_b=ps_b)
+
+
+def together(person: str, located: int) -> list[PhotoMeta]:
+    """Ten photos at Tahoe in hour H, the first `located` of them with GPS."""
+    return [photo(f"{person}-{i}", H * 3600 + 60 * i, at=TAHOE if i < located else None) for i in range(10)]
+
+
+@pytest.mark.parametrize("blind", ["a", "b"])
+def test_a_trip_with_gps_on_one_side_only_is_not_found(blind):
+    """Twenty photos together, but one partner's carry no location: nothing of theirs to match."""
+    ps = {p: together(p, 0 if p == blind else 10) for p in "ab"}
+    assert found(ps["a"], ps["b"]) == []
+
+
+@pytest.mark.parametrize("sparse", ["a", "b"])
+def test_one_located_photo_on_the_other_side_finds_it_and_backfill_brings_the_rest(sparse):
+    ps = {p: together(p, 1 if p == sparse else 10) for p in "ab"}
+    [w] = found(ps["a"], ps["b"])
+    assert (w.matched_bucket_count, w.photo_count_a, w.photo_count_b) == (1, 10, 10)
+
+
 # home history: a home in OLD_CITY until MOVE, then the anchors' homes
 
 OLD_CITY = LatLon(47.6062, -122.3321)  # ~1,100 km from HOME
